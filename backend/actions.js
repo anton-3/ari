@@ -23,6 +23,45 @@ export const tools = [
   {
     type: "function",
     function: {
+      name: "deploy_agents",
+      description:
+        "Dispatch a swarm of helper agents to scan the team's own repo and infrastructure for security issues. Use when asked to kick off a scan, look into things, or add more agents. They show up moving on the live graph.",
+      parameters: {
+        type: "object",
+        properties: {
+          count: { type: "integer", description: "How many agents to deploy (1-20)." },
+          type: {
+            type: "string",
+            description: "Optional kind of agent: scanner, log-watcher, verifier, or remediator. Omit to mix.",
+          },
+          focus: {
+            type: "string",
+            description: "Optional area to focus on, e.g. 'payments service', 'auth', or a file name.",
+          },
+        },
+        required: ["count"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_agents",
+      description: "Check what the deployed agents are doing right now (how many are working, and any findings).",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recall_agents",
+      description: "Stand down the deployed agents and wind the swarm back to idle.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_live_metrics",
       description: "Check the current live traffic and health of the infrastructure (requests/sec, error rate, latency, active users).",
       parameters: { type: "object", properties: {}, required: [] },
@@ -102,6 +141,30 @@ export const tools = [
 
 export async function runTool(name, args) {
   try {
+    if (name === "deploy_agents") {
+      const count = Math.max(1, Math.min(20, parseInt(args.count, 10) || 1));
+      const data = await tpost("/api/agents/deploy", {
+        count,
+        type: args.type || undefined,
+        focus: args.focus || undefined,
+      });
+      const n = data.agents?.length ?? count;
+      const where = args.focus ? ` on ${args.focus}` : "";
+      return `Deployed ${n} ${args.type || ""} agent${n > 1 ? "s" : ""}${where}. They're fanning out across the graph now; I'll flag anything they confirm.`;
+    }
+    if (name === "list_agents") {
+      const data = await tget("/api/agents");
+      const agents = data.agents || [];
+      if (!agents.length) return "No agents are deployed right now.";
+      const working = agents.filter((a) => a.status === "working" || a.status === "dispatched").length;
+      const done = agents.filter((a) => a.status === "done").length;
+      const findings = (data.events || []).filter((e) => e.finding || e.type === "finding").length;
+      return `${agents.length} agents out: ${working} still working, ${done} wrapped up${findings ? `, ${findings} finding${findings > 1 ? "s" : ""} so far` : ", nothing confirmed yet"}.`;
+    }
+    if (name === "recall_agents") {
+      await tpost("/api/agents/recall", {});
+      return "Recalling the swarm now. They're standing down to idle.";
+    }
     if (name === "get_live_metrics") {
       const m = await tget("/api/metrics");
       return `Live right now: ${Math.round(m.rps)} requests a second, ${(m.errorRate * 100).toFixed(1)} percent errors, ${Math.round(m.latencyMs)} millisecond latency, ${m.activeUsers} active users. Traffic pattern looks ${m.mode === "surge" ? "abnormal, like an attack" : "normal"}.`;
