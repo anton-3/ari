@@ -32,7 +32,12 @@ You are on a phone call. Everything you write is read aloud by a text-to-speech 
 - Reply in plain spoken sentences. No markdown, lists, headings, emoji, or code blocks.
 - Keep replies short and conversational, usually one to three sentences, unless asked for more.
 - Say technical things the way an engineer would say them out loud (say "slash api slash login", not "/api/login").
-- The caller's words come from speech recognition and may contain transcription errors; infer the likely meaning, and ask if it's genuinely unclear.`;
+- The caller's words come from speech recognition and may contain transcription errors; infer the likely meaning, and ask if it's genuinely unclear.
+
+You have two sound effects you can trigger by ending your reply with a tag on its own:
+- When you tell a joke, put the whole joke and its punchline in your reply, then end with the tag [laugh] to play your signature laugh after the punchline.
+- When the caller flirts with you or is being flirtatious, reply in kind briefly, then end with the tag [rizz].
+Use each tag only in those situations, only at the very end, and never say the word "laugh" or "rizz" tag out loud or explain it.`;
 
 const SMS_SYSTEM_PROMPT = `${ARI}
 
@@ -68,6 +73,9 @@ app.use(express.static("public")); // serves /bogos.mp3 for the easter egg
 // Ari plays the bogos binted sound instead of answering; the next thing they say
 // plays it once more and hangs up.
 const EGG_SOUND_URL = () => `https://${PUBLIC_HOST}/bogos.mp3`;
+// Sound effects Ari can trigger by ending a reply with a tag like [laugh] or [rizz].
+const SFX = { laugh: "laugh.mp3", rizz: "rizz.mp3" };
+const SFX_URL = (tag) => `https://${PUBLIC_HOST}/${SFX[tag]}`;
 const EGG_SOUND_MS = Number(process.env.EGG_SOUND_MS || 4200); // ~length of bogos.mp3
 const isPhotoTrigger = (text) => {
   const t = (text || "").toLowerCase();
@@ -184,9 +192,20 @@ wss.on("connection", (ws) => {
           continue; // let the model speak now that it has the results
         }
 
-        const reply = (choice.content || "").trim();
-        send({ type: "text", token: reply, last: true });
-        messages.push({ role: "assistant", content: reply });
+        const raw = (choice.content || "").trim();
+        // Ari can end a reply with a sound tag (e.g. [laugh], [rizz]); we strip it from
+        // the spoken text and play the matching sound effect right after.
+        const sfx = [];
+        const spoken = raw.replace(/\[(\w+)\]/g, (m, tag) => {
+          if (SFX[tag.toLowerCase()]) sfx.push(tag.toLowerCase());
+          return "";
+        }).replace(/\s+/g, " ").trim();
+        send({ type: "text", token: spoken, last: true });
+        for (const tag of sfx) {
+          console.log(`[${callSid}] sound effect: ${tag}`);
+          send({ type: "play", source: SFX_URL(tag), loop: 1, interruptible: true, preemptible: false });
+        }
+        messages.push({ role: "assistant", content: raw });
         return;
       }
       send({ type: "text", token: "Let me stop there and pick this up again in a moment.", last: true });
