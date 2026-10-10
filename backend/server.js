@@ -82,6 +82,9 @@ const isPhotoTrigger = (text) => {
   return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
 };
 const CANES_URL = () => `https://${PUBLIC_HOST}/canes.mp3`;
+// Tools slow enough to warrant hold music while they run.
+const LONG_TOOLS = new Set(["provision_instances"]);
+const HOLD_URL = () => `https://${PUBLIC_HOST}/hold.mp3`;
 const isCanesTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\bcane'?s?\b/.test(t) && /\b(doordash|door dash|deliver|delivered|order|bring|get me|grab|uber ?eats)\b/.test(t);
@@ -186,6 +189,13 @@ wss.on("connection", (ws) => {
 
         if (choice.tool_calls?.length) {
           messages.push(choice);
+          // Long-running actions (e.g. provisioning) get hold music while they run.
+          // The music loops and is preemptible, so the final result text stops it.
+          if (choice.tool_calls.some((c) => LONG_TOOLS.has(c.function.name))) {
+            console.log(`[${callSid}] long task: hold music`);
+            send({ type: "text", token: "Working on it. I'll put you on hold and let you know when it's done.", last: true, interruptible: false });
+            send({ type: "play", source: HOLD_URL(), loop: 0, interruptible: true, preemptible: true });
+          }
           for (const call of choice.tool_calls) {
             let args = {};
             try {
