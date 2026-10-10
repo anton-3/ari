@@ -1,9 +1,9 @@
-import type { ComponentPropsWithRef } from 'react'
+import type { ComponentPropsWithoutRef } from 'react'
 
 type Variant = 'accent' | 'ghost'
 
-type AnchorProps = ComponentPropsWithRef<'a'> & { href: string }
-type ButtonProps = ComponentPropsWithRef<'button'> & { href?: undefined }
+type AnchorProps = ComponentPropsWithoutRef<'a'> & { href: string }
+type ButtonProps = ComponentPropsWithoutRef<'button'> & { href?: undefined }
 
 type ButtonLinkProps = (AnchorProps | ButtonProps) & { variant?: Variant }
 

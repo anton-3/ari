@@ -1,14 +1,9 @@
-import type { ReactNode } from 'react'
 import { ButtonLink } from '@/components/ui/ButtonLink'
 import { site } from '@/config/site'
 import { scrollToSection } from '@/utils/scrollToSection'
 import './hero.css'
 
-type HeroProps = {
-  secondaryAction: ReactNode
-}
-
-export function Hero({ secondaryAction }: HeroProps) {
+export function Hero() {
   return (
     <section className="hero">
       <div className="container hero__inner">
@@ -40,7 +35,6 @@ export function Hero({ secondaryAction }: HeroProps) {
         </p>
         <div className="hero__actions">
           <ButtonLink onClick={() => scrollToSection(site.sections.howPanel, 'center')}>See how it works</ButtonLink>
-          {secondaryAction}
         </div>
       </div>
     </section>
