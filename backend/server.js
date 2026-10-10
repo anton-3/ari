@@ -82,9 +82,6 @@ const isPhotoTrigger = (text) => {
   return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
 };
 const CANES_URL = () => `https://${PUBLIC_HOST}/canes.mp3`;
-// Tools slow enough to warrant hold music while they run.
-const LONG_TOOLS = new Set(["provision_instances"]);
-const HOLD_URL = () => `https://${PUBLIC_HOST}/hold.mp3`;
 const isCanesTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\bcane'?s?\b/.test(t) && /\b(doordash|door dash|deliver|delivered|order|bring|get me|grab|uber ?eats)\b/.test(t);
@@ -100,7 +97,7 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any" dtmfDetection="true"
+    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
       ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
       transcriptionProvider="Deepgram" speechModel="nova-3-general">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
@@ -189,13 +186,6 @@ wss.on("connection", (ws) => {
 
         if (choice.tool_calls?.length) {
           messages.push(choice);
-          // Long-running actions (e.g. provisioning) get hold music while they run.
-          // The music loops and is preemptible, so the final result text stops it.
-          if (choice.tool_calls.some((c) => LONG_TOOLS.has(c.function.name))) {
-            console.log(`[${callSid}] long task: hold music`);
-            send({ type: "text", token: "Working on it. I'll put you on hold and let you know when it's done.", last: true, interruptible: false });
-            send({ type: "play", source: HOLD_URL(), loop: 0, interruptible: true, preemptible: true });
-          }
           for (const call of choice.tool_calls) {
             let args = {};
             try {
@@ -273,10 +263,6 @@ wss.on("connection", (ws) => {
           eggArmed = true;
           console.log(`[${callSid}] easter egg triggered`);
           send({ type: "text", token: "Bogos binted.", last: true, interruptible: false });
-        } else if (/hold music/i.test(msg.voicePrompt || "")) {
-          // Direct trigger for testing the hold music.
-          console.log(`[${callSid}] hold music test`);
-          send({ type: "play", source: HOLD_URL(), loop: 1, interruptible: true, preemptible: true });
         } else if (isCanesTrigger(msg.voicePrompt)) {
           // First step: Ari plays along, then the caller's next line triggers the crashout.
           canesArmed = true;
@@ -291,13 +277,6 @@ wss.on("connection", (ws) => {
           current.aborted = true;
           current.heard = msg.utteranceUntilInterrupt || "";
           current.controller.abort();
-        }
-        break;
-      case "dtmf":
-        // Press 1 to play the hold music, uninterruptible.
-        if (msg.digit === "1") {
-          console.log(`[${callSid}] dtmf 1: hold music (uninterruptible)`);
-          send({ type: "play", source: HOLD_URL(), loop: 1, interruptible: false, preemptible: false });
         }
         break;
       case "error":
