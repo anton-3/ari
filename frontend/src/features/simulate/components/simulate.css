@@ -1,0 +1,35 @@
+.demo {
+  padding: 112px 0;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.demo__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.demo .display {
+  max-width: 18ch;
+}
+
+/* A larger version of the standard accent button. */
+.demo .demo__cta {
+  height: 56px;
+  margin-top: 40px;
+  padding: 0 40px;
+  font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .demo {
+    padding: 80px 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .demo .demo__cta {
+    width: 100%;
+  }
+}

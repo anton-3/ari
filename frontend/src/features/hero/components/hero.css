@@ -1,0 +1,44 @@
+.hero {
+  padding: 136px 0 128px;
+  text-align: center;
+}
+
+.hero__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hero__accent {
+  position: relative;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.hero__sweep {
+  position: absolute;
+  left: 0;
+  bottom: -0.2em;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.hero .lede {
+  margin: 44px 0 0;
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  margin-top: 40px;
+}
+
+@media (max-width: 640px) {
+  .hero {
+    padding: 72px 0 80px;
+  }
+}
