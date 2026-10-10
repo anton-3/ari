@@ -1,5 +1,6 @@
 import { Header } from '@/components/layouts/Header'
 import { AuthTrigger } from '@/features/auth/components/AuthTrigger'
+import { Simulate } from '@/features/simulate/components/Simulate'
 import { Hero } from '@/features/hero/components/Hero'
 import { HowItWorks } from '@/features/how-it-works/components/HowItWorks'
 
@@ -37,6 +38,7 @@ export function Landing() {
             }
           />
           <HowItWorks />
+          <Simulate />
         </main>
       </div>
     </>

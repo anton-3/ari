@@ -39,7 +39,7 @@ export function Hero({ secondaryAction }: HeroProps) {
           Ari does blank.
         </p>
         <div className="hero__actions">
-          <ButtonLink onClick={() => scrollToSection(site.sections.howPanel, 'center')}>See a demo</ButtonLink>
+          <ButtonLink onClick={() => scrollToSection(site.sections.howPanel, 'center')}>See how it works</ButtonLink>
           {secondaryAction}
         </div>
       </div>
