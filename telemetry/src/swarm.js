@@ -1,4 +1,6 @@
 // In-memory simulation of Ari's helper agent swarm.
+// Used only when no ari-net fleet exists (see fleet/agents.js for the real
+// agent jobs); agents and events from here carry `simulated: true`.
 //
 // This is a SIMULATION ONLY. It never touches the network, never runs code and
 // never performs any real scanning or attacking. It only mutates in-memory
@@ -24,15 +26,15 @@ const AGENT_LABELS = {
 // file paths are repo-relative so they line up with repograph node ids.
 const FINDINGS = [
   { key: 'SQLI', title: 'SQL injection in transaction search', severity: 'critical',
-    file: 'target-app/src/server.js', line: 127, endpoint: 'GET /api/transactions' },
+    file: 'target-app/src/server.js', line: 131, endpoint: 'GET /api/transactions' },
   { key: 'SECRETS', title: 'Hard-coded secrets committed to source', severity: 'high',
     file: 'target-app/src/config.js', line: 20, endpoint: 'ALL' },
   { key: 'IDOR', title: 'Broken access control / IDOR on user profile', severity: 'high',
-    file: 'target-app/src/server.js', line: 78, endpoint: 'GET /api/users/:id' },
+    file: 'target-app/src/server.js', line: 81, endpoint: 'GET /api/users/:id' },
   { key: 'VERBOSE', title: 'Verbose error messages leak stack traces & SQL', severity: 'medium',
-    file: 'target-app/src/server.js', line: 133, endpoint: 'GET /api/transactions' },
+    file: 'target-app/src/server.js', line: 136, endpoint: 'GET /api/transactions' },
   { key: 'MD5', title: 'Weak password hashing (unsalted MD5)', severity: 'medium',
-    file: 'target-app/src/db.js', line: 37, endpoint: 'POST /api/login' },
+    file: 'target-app/src/db.js', line: 33, endpoint: 'POST /api/login' },
 ];
 
 const EVENT_MAX = 200;
@@ -55,7 +57,7 @@ function rand(a, b) { return a + Math.random() * (b - a); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 function pushEvent(evt) {
-  const full = { ts: new Date().toISOString(), id: `EVT-${++seq}`, ...evt };
+  const full = { ts: new Date().toISOString(), id: `EVT-${++seq}`, ...evt, simulated: true };
   events.push(full);
   if (events.length > EVENT_MAX) events.shift();
   return full;
@@ -117,6 +119,7 @@ export function deployAgents({ count = 4, type = null, focus = null } = {}) {
       progress: 0,
       spawnedAt: new Date().toISOString(),
       note: `Dispatched to ${target.label}`,
+      simulated: true,
       _findingKey: target.finding ? target.finding.key : null,
       _reported: false,
     };

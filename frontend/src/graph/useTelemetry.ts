@@ -64,7 +64,7 @@ function hubTargetIds(topo: Topology | null, repo: RepoGraph | null): string[] {
  *   3. Built-in self-evolving mock (source = "mock")
  * The page always renders and animates regardless of what is reachable.
  */
-export function useTelemetry(): GraphTelemetry {
+export function useTelemetry(sim = false): GraphTelemetry {
   const [repoGraph, setRepoGraph] = useState<RepoGraph | null>(null)
   const [topology, setTopology] = useState<Topology | null>(null)
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -83,6 +83,7 @@ export function useTelemetry(): GraphTelemetry {
     let cancelled = false
     let ws: WebSocket | null = null
     let pollTimer: number | undefined
+    let retryTimer: number | undefined
     const mockTimers: number[] = []
 
     const pushReasoning = (line: ReasoningLine) => {
@@ -219,7 +220,13 @@ export function useTelemetry(): GraphTelemetry {
       const m = await fetchJson<Metrics>(API.metrics)
       if (cancelled) return
       if (!m) {
-        startMock()
+        // Mock only when explicitly requested (?sim=1). Otherwise stay offline
+        // and keep probing so the page goes LIVE as soon as :8090 answers.
+        if (sim) startMock()
+        else {
+          setSource('connecting')
+          retryTimer = window.setTimeout(() => void boot(), 4000)
+        }
         return
       }
       setMetrics(m)
@@ -230,12 +237,11 @@ export function useTelemetry(): GraphTelemetry {
         fetchJson<ReasoningResponse>(API.reasoning(MAX_REASONING)),
       ])
       if (cancelled) return
-      // Fill any gaps from the service with mock so the page is always complete.
-      setRepoGraph(repo ?? makeRepoGraph())
-      setTopology(topo ?? makeTopology())
-      if (ag) setAgents(ag.agents)
-      else setAgents(makeAgentsSeed(hubTargetIds(topo, repo)).agents)
-      setReasoning(rs ? rs.lines.slice(-MAX_REASONING) : makeReasoningSeed())
+      // LIVE: only real data — never fill gaps with mock.
+      setRepoGraph(repo)
+      setTopology(topo)
+      setAgents(ag?.agents ?? [])
+      setReasoning(rs ? rs.lines.slice(-MAX_REASONING) : [])
       connectWs()
     }
 
@@ -249,9 +255,10 @@ export function useTelemetry(): GraphTelemetry {
         /* ignore */
       }
       if (pollTimer !== undefined) window.clearInterval(pollTimer)
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
       mockTimers.forEach((t) => window.clearInterval(t))
     }
-  }, [])
+  }, [sim])
 
   return { repoGraph, topology, metrics, agents, events, reasoning, source }
 }

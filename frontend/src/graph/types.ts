@@ -102,6 +102,7 @@ export interface Agent {
   targetNodeId: string
   progress: number // 0..1
   note?: string
+  simulated?: boolean
 }
 
 export interface FindingDetail {
@@ -175,3 +176,153 @@ export type WsMessage =
 
 // Connection state surfaced to the UI.
 export type FeedSource = 'live' | 'polling' | 'mock' | 'connecting'
+
+// ---- Fleet (/api/fleet) — real servers running the example app -------------
+export type FleetRole =
+  | 'lb'
+  | 'app'
+  | 'db'
+  | 'cache'
+  | 'worker'
+  | 'traffic'
+  | 'controller'
+  | 'internet'
+  | string
+
+export type FleetStatus = 'provisioning' | 'booting' | 'running' | 'offline' | 'deleting' | string
+
+export type FleetProtocol = 'http' | 'http-app' | 'postgres' | 'redis' | 'ssh' | 'other' | string
+
+export interface FleetProcess {
+  name: string
+  pid: number
+  ports: number[]
+}
+
+export type IssueSeverity = 'critical' | 'high' | 'medium' | 'low' | string
+
+export interface FleetIssue {
+  id: string
+  severity: IssueSeverity
+  kind: string
+  title: string
+  detail: string
+  since: number | string
+  source: string
+  file?: string // optional repo path when the issue is tied to a file
+  symbolId?: string // optional codemap symbol the issue is tied to
+}
+
+// NOTE: on the wire, string/array/number fields below may be null (e.g. the
+// synthetic controller/internet nodes have no IPs). useFleet.publish() is the
+// single normalization boundary; everything downstream sees these shapes.
+export interface FleetNode {
+  id: string
+  label: string
+  role: FleetRole
+  status: FleetStatus
+  publicIp: string
+  privateIp: string
+  region: string
+  type: string
+  cpu: number // 0..1
+  memUsed: number
+  memTotal: number
+  load1: number
+  processes: FleetProcess[]
+  deletable: boolean
+  issues?: FleetIssue[]
+}
+
+export interface FleetLink {
+  id: string
+  source: string
+  target: string
+  protocol: FleetProtocol
+  port: number
+  bytesPerSec: number
+  bytesPerSecReverse: number
+  conns: number
+}
+
+export interface Fleet {
+  nodes: FleetNode[]
+  links: FleetLink[]
+  updatedAt: number | string
+}
+
+export interface FleetRoleInfo {
+  role: FleetRole
+  label: string
+  description: string
+  addable: boolean
+}
+
+export interface FleetLogLine {
+  ts: number
+  level: 'info' | 'error'
+  text: string
+}
+
+// ---- Alerts (WS "alert" frames + GET /api/alerts) -------------------------
+export interface FleetAlert {
+  id: string
+  issueId: string
+  nodeId: string
+  label: string
+  role: string
+  severity: IssueSeverity
+  kind: string
+  title: string
+  detail: string
+  state: 'raised' | 'cleared' | string
+  ts: number | string
+}
+
+// ---- Codemap (/api/fleet/codemap) — files of our code per role --------------
+export type SymKind = 'route' | 'function' | 'class' | 'method' | 'config' | 'query' | string
+export interface Sym {
+  id: string
+  name: string
+  kind: SymKind
+  line: number
+  endLine: number
+  calls: string[] // ids of called symbols
+  children?: Sym[]
+  route?: { method: string; path: string }
+  secret?: boolean // config holding a secret: never show a value
+}
+export interface RouteStat {
+  method: string
+  path: string
+  symbolId: string
+  rps: number
+  errorRate: number
+  p95ms: number | null
+}
+export interface CodemapFile {
+  path: string
+  label: string
+  loc: number
+  symbols?: Sym[]
+}
+export interface CodemapEdge {
+  from: string
+  to: string
+  kind: 'import' | string
+}
+export interface CodemapPort {
+  dir: 'in' | 'out' | string
+  port: number
+  file: string
+}
+export interface CodemapRole {
+  root: string
+  files: CodemapFile[]
+  edges: CodemapEdge[]
+  ports: CodemapPort[]
+  routes?: RouteStat[] // real per-route traffic (app role)
+}
+export interface Codemap {
+  roles: Record<string, CodemapRole>
+}

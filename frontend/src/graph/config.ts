@@ -11,6 +11,12 @@ export const API = {
   metrics: `${TELEMETRY_BASE_URL}/api/metrics`,
   agents: `${TELEMETRY_BASE_URL}/api/agents`,
   reasoning: (limit = 50) => `${TELEMETRY_BASE_URL}/api/reasoning?limit=${limit}`,
+  fleet: `${TELEMETRY_BASE_URL}/api/fleet`,
+  codemap: `${TELEMETRY_BASE_URL}/api/fleet/codemap`,
+  fleetRoles: `${TELEMETRY_BASE_URL}/api/fleet/roles`,
+  fleetNodes: `${TELEMETRY_BASE_URL}/api/fleet/nodes`,
+  alerts: (limit = 50) => `${TELEMETRY_BASE_URL}/api/alerts?limit=${limit}`,
+  fleetNode: (id: string) => `${TELEMETRY_BASE_URL}/api/fleet/nodes/${encodeURIComponent(id)}`,
 }
 
 export const WS_URL = `${TELEMETRY_BASE_URL.replace(/^http/, 'ws')}/ws`

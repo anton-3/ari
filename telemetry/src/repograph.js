@@ -38,7 +38,7 @@ function toId(absPath) {
   return path.relative(REPO_ROOT, absPath).split(path.sep).join('/');
 }
 
-function countLines(absPath) {
+export function countLines(absPath) {
   try {
     const txt = fs.readFileSync(absPath, 'utf8');
     if (txt.length === 0) return 0;
@@ -89,7 +89,7 @@ function walk(dir, kind, out) {
 }
 
 // Extract relative import/require specifiers from source text.
-function extractSpecifiers(text) {
+export function extractSpecifiers(text) {
   const specs = [];
   // import ... from 'x'  /  import 'x'  /  export ... from 'x'
   const importRe = /(?:import|export)\s+(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]/g;
