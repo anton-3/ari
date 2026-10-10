@@ -62,6 +62,17 @@ const xmlEscape = (s) =>
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
+app.use(express.static("public")); // serves /bogos.mp3 for the easter egg
+
+// Easter egg: if the caller asks something like "did you get your photos printed?",
+// Ari plays the bogos binted sound instead of answering; the next thing they say
+// plays it once more and hangs up.
+const EGG_SOUND_URL = () => `https://${PUBLIC_HOST}/bogos.mp3`;
+const EGG_SOUND_MS = Number(process.env.EGG_SOUND_MS || 4200); // ~length of bogos.mp3
+const isPhotoTrigger = (text) => {
+  const t = (text || "").toLowerCase();
+  return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
+};
 
 // Twilio hits this webhook when a call comes in; the TwiML hands the call to ConversationRelay.
 // Outbound calls (see call.js) pass ?greeting=...&prompt=... to customize the conversation.
@@ -128,6 +139,8 @@ wss.on("connection", (ws) => {
   const messages = [{ role: "assistant", content: GREETING }];
   let current = null; // { controller, aborted, heard } for the in-flight reply
   let callSid = "unknown";
+  let eggArmed = false; // easter egg: true after the photo-trigger, until the next utterance
+  let eggEnding = false; // true while the final sound plays before hangup
 
   const send = (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
 
@@ -207,7 +220,22 @@ wss.on("connection", (ws) => {
         break;
       case "prompt":
         console.log(`[${callSid}] caller: ${msg.voicePrompt}`);
-        respond(msg.voicePrompt);
+        if (eggEnding) break; // final sound is playing; ignore anything until hangup
+        if (eggArmed) {
+          // Second step: play the sound once more, then end the call.
+          eggArmed = false;
+          eggEnding = true;
+          console.log(`[${callSid}] easter egg: final sound + hangup`);
+          send({ type: "play", source: EGG_SOUND_URL(), loop: 1, interruptible: false, preemptible: false });
+          setTimeout(() => send({ type: "end", handoffData: '{"reason":"bogos"}' }), EGG_SOUND_MS);
+        } else if (isPhotoTrigger(msg.voicePrompt)) {
+          // First step: respond with the bogos sound, then wait for the caller's reaction.
+          eggArmed = true;
+          console.log(`[${callSid}] easter egg triggered`);
+          send({ type: "play", source: EGG_SOUND_URL(), loop: 1, interruptible: false, preemptible: false });
+        } else {
+          respond(msg.voicePrompt);
+        }
         break;
       case "interrupt":
         if (current) {
