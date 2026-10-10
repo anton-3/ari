@@ -100,7 +100,7 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
+    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any" dtmfDetection="true"
       ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
       transcriptionProvider="Deepgram" speechModel="nova-3-general">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
@@ -291,6 +291,13 @@ wss.on("connection", (ws) => {
           current.aborted = true;
           current.heard = msg.utteranceUntilInterrupt || "";
           current.controller.abort();
+        }
+        break;
+      case "dtmf":
+        // Press 1 to play the hold music, uninterruptible.
+        if (msg.digit === "1") {
+          console.log(`[${callSid}] dtmf 1: hold music (uninterruptible)`);
+          send({ type: "play", source: HOLD_URL(), loop: 1, interruptible: false, preemptible: false });
         }
         break;
       case "error":
