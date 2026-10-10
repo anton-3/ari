@@ -35,7 +35,7 @@ You are on a phone call. Everything you write is read aloud by a text-to-speech 
 - The caller's words come from speech recognition and may contain transcription errors; infer the likely meaning, and ask if it's genuinely unclear.
 
 You have two sound effects you can trigger by ending your reply with a tag on its own:
-- When someone asks for a joke, actually tell one (you're happy to have fun between incidents): put the whole joke and its punchline in your reply, then end with the tag [laugh] on its own. Example: "Why did the database administrator leave his wife? She had one-to-many relationships. [laugh]"
+- When the CALLER tells you a joke or says something clearly meant to be funny, react with a short natural line (like "ha, good one") and end with the tag [laugh] to play your laugh after the punchline. Don't laugh at ordinary conversation.
 - When the caller flirts with you or is being flirtatious, reply in kind briefly, then end with the tag [rizz].
 Use each tag only in those situations, only at the very end, and never say the word "laugh" or "rizz" tag out loud or explain it.`;
 
@@ -80,10 +80,6 @@ const EGG_SOUND_MS = Number(process.env.EGG_SOUND_MS || 4200); // ~length of bog
 const isPhotoTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
-};
-const isJokeRequest = (text) => {
-  const t = (text || "").toLowerCase();
-  return /\bjokes?\b|make me laugh|something funny|got anything funny|tell me (a|something)/.test(t);
 };
 const CANES_URL = () => `https://${PUBLIC_HOST}/canes.mp3`;
 const isCanesTrigger = (text) => {
@@ -159,7 +155,6 @@ wss.on("connection", (ws) => {
   let eggArmed = false; // easter egg: true after the photo-trigger, until the next utterance
   let eggEnding = false; // true while the final sound plays before hangup
   let canesArmed = false; // easter egg: true after the "doordash me canes" trigger
-  let forceLaugh = false; // play the laugh after the next reply (caller asked for a joke)
 
   const send = (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
 
@@ -211,10 +206,6 @@ wss.on("connection", (ws) => {
           if (SFX[tag.toLowerCase()]) sfx.push(tag.toLowerCase());
           return "";
         }).replace(/\s+/g, " ").trim();
-        // Fallback: if the caller explicitly asked for a joke, play the laugh even if
-        // the model forgot the [laugh] tag.
-        if (forceLaugh && !sfx.includes("laugh")) sfx.push("laugh");
-        forceLaugh = false;
         send({ type: "text", token: spoken, last: true });
         for (const tag of sfx) {
           console.log(`[${callSid}] sound effect: ${tag}`);
@@ -278,7 +269,6 @@ wss.on("connection", (ws) => {
           console.log(`[${callSid}] canes egg triggered`);
           send({ type: "text", token: "Sure thing, what do you want?", last: true, interruptible: false });
         } else {
-          if (isJokeRequest(msg.voicePrompt)) forceLaugh = true;
           respond(msg.voicePrompt);
         }
         break;
