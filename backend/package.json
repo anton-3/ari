@@ -7,7 +7,8 @@
     "start": "node --env-file-if-exists=.env server.js",
     "call": "node --env-file-if-exists=.env call.js",
     "text": "node --env-file-if-exists=.env text.js",
-    "drill": "node --env-file-if-exists=.env drill.js"
+    "drill": "node --env-file-if-exists=.env drill.js",
+    "cleanup-nodes": "node --env-file-if-exists=.env cleanup-nodes.js"
   },
   "repository": {
     "type": "git",

@@ -29,3 +29,16 @@ Scripts (run from `backend/`):
 - `npm run drill -- +1NUMBER [instance-label]` — DDoS drill: simulates a traffic surge, then Ari calls to report it and, with your spoken OK, shuts the instance down. No real attack traffic is generated.
 
 Extra env vars (see `.env.example`): `LINODE_API_TOKEN`, `TWILIO_NUMBER` (calls), `TWILIO_SMS_NUMBER` (texts), `TTS_PROVIDER`/`TTS_VOICE`.
+
+## Ari's tools (expanded)
+
+On a call, Ari can now use these tools (see `linode.js` and `actions.js`):
+- Instances: `list_instances`, `provision_instances` (spin up new nodes; sensible defaults, honors size/region if asked), `shutdown_instance`, `boot_instance`.
+- Live data: `get_live_metrics`, `report_vulnerability` — these talk to the telemetry service (`TELEMETRY_URL`, default http://localhost:8090); findings posted this way appear on the dashboard live.
+- Security actions (demo-safe stubs): `rollback_commit`, `rotate_secret`, `block_ips`, `close_ports`.
+
+`npm run cleanup-nodes` deletes every instance Ari provisioned (tag `ari-provisioned`); the target app is left alone.
+
+Scenarios beyond the DDoS drill live in `scenarios/` — run `node --env-file-if-exists=.env scenarios/run-scenario.js <key> +1NUMBER` (keys: ddos, sqli-commit, exposed-secret, brute-force, port-scan; prefix `DRY_RUN=1` to preview without calling).
+
+Note: the Linode account is capped at 10 total instances; "spin up 10" needs a limit increase from Linode support. Ari reports partial success gracefully.

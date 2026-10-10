@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AcmePay — Payments Infrastructure</title>
+  <style>
+    :root { --bg:#0b1020; --card:#131a2e; --fg:#e8ecf5; --muted:#9aa6c4; --accent:#4f8cff; --line:#223052; }
+    @media (prefers-color-scheme: light) {
+      :root { --bg:#f5f7fc; --card:#ffffff; --fg:#111828; --muted:#5a6682; --accent:#2563eb; --line:#e3e8f2; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background:var(--bg); color:var(--fg); line-height:1.55; }
+    .wrap { max-width:860px; margin:0 auto; padding:48px 16px 72px; }
+    header { display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+    .logo { width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg,#4f8cff,#7b5cff);
+      display:grid; place-items:center; color:#fff; font-weight:800; }
+    h1 { font-size:1.6rem; margin:0; }
+    .tag { color:var(--muted); margin:4px 0 28px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
+    .card h3 { margin:0 0 6px; font-size:0.95rem; }
+    .card p { margin:0; color:var(--muted); font-size:0.9rem; }
+    code { background:rgba(127,127,127,.15); padding:2px 6px; border-radius:6px; font-size:0.82rem; }
+    .pill { display:inline-block; background:rgba(79,140,255,.15); color:var(--accent);
+      border:1px solid rgba(79,140,255,.3); padding:3px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; }
+    .ep { margin-top:28px; }
+    .ep table { width:100%; border-collapse:collapse; font-size:0.86rem; }
+    .ep td { padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+    .m { font-weight:700; color:var(--accent); white-space:nowrap; }
+    footer { margin-top:40px; color:var(--muted); font-size:0.8rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">A</div>
+      <h1>AcmePay</h1>
+    </header>
+    <div class="tag">Payments &amp; checkout infrastructure for modern businesses. <span class="pill">API v1.2</span></div>
+
+    <div class="grid">
+      <div class="card"><h3>Accept payments</h3><p>Charge cards and move money with a single REST call.</p></div>
+      <div class="card"><h3>Transactions</h3><p>Search, reconcile and export your full ledger in real time.</p></div>
+      <div class="card"><h3>Merchant accounts</h3><p>Onboard sub-merchants across regions and categories.</p></div>
+      <div class="card"><h3>99.98% uptime</h3><p>Globally distributed, built for scale.</p></div>
+    </div>
+
+    <div class="ep">
+      <h3>API endpoints</h3>
+      <table>
+        <tr><td class="m">GET</td><td><code>/health</code></td><td>Service health check.</td></tr>
+        <tr><td class="m">POST</td><td><code>/api/login</code></td><td>Authenticate with email + password.</td></tr>
+        <tr><td class="m">GET</td><td><code>/api/users/:id</code></td><td>Fetch a user profile.</td></tr>
+        <tr><td class="m">GET</td><td><code>/api/transactions?user=&amp;status=</code></td><td>Search the transaction ledger.</td></tr>
+        <tr><td class="m">POST</td><td><code>/api/payments</code></td><td>Create a payment.</td></tr>
+        <tr><td class="m">GET</td><td><code>/api/merchants</code></td><td>List merchant accounts.</td></tr>
+      </table>
+    </div>
+
+    <footer>© 2024 AcmePay, Inc. — DEMO environment. Not for production use.</footer>
+  </div>
+</body>
+</html>

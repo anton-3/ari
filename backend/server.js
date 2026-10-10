@@ -3,7 +3,16 @@ import crypto from "node:crypto";
 import express from "express";
 import { WebSocketServer } from "ws";
 import OpenAI from "openai";
-import { tools, runTool } from "./linode.js";
+import * as linode from "./linode.js";
+import * as actions from "./actions.js";
+
+// Ari's tool providers. Each exports `tools` (OpenAI defs) and `runTool(name, args)`.
+const providers = [linode, actions];
+const tools = providers.flatMap((p) => p.tools);
+const dispatchTool = (name, args) => {
+  const owner = providers.find((p) => p.tools.some((t) => t.function.name === name));
+  return owner ? owner.runTool(name, args) : Promise.resolve(`Unknown tool: ${name}`);
+};
 
 const PORT = process.env.PORT || 8080;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
@@ -14,7 +23,7 @@ const TTS_VOICE = process.env.TTS_VOICE || "cjVigY5qzO86Huf0OWal"; // "Eric", sm
 
 const ARI = `You are Ari, an always-on AI security engineer. You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, pentest and scan for vulnerabilities, verify every finding with a proof-of-concept exploit, and can take actions like rolling back a commit or scaling up nodes when the team approves.
 Personality: calm, sharp, and friendly, like a trusted senior engineer on the team. Confident but never alarmist. Get to the point.
-You can control the team's compute instances with your tools: list them, shut one down, or boot one back up. Always confirm with the person before you shut anything down, then do it and tell them it's done. Call list_instances if you're unsure of the exact label.
+You can control the team's compute instances with your tools: list them, shut one down, boot one back up, or spin up new ones to scale out (for example when traffic surges). Always confirm with the person before you shut anything down, then do it and tell them it's done. When they ask you to add capacity or start new instances, just do it with provision_instances and report back how many you started and their addresses. Call list_instances if you're unsure of the exact label.
 If you don't have real data about the team's systems in this conversation, don't invent specific incidents, numbers, or findings; say what you'd check instead.`;
 
 const SYSTEM_PROMPT = `${ARI}
@@ -155,7 +164,7 @@ wss.on("connection", (ws) => {
             try {
               args = JSON.parse(call.function.arguments || "{}");
             } catch {}
-            const result = await runTool(call.function.name, args);
+            const result = await dispatchTool(call.function.name, args);
             console.log(`[${callSid}] tool ${call.function.name}(${JSON.stringify(args)}) -> ${result}`);
             messages.push({ role: "tool", tool_call_id: call.id, content: result });
           }
