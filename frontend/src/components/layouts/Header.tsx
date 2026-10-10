@@ -13,9 +13,6 @@ export function Header({ actions }: HeaderProps) {
           {site.name}
         </a>
         <nav className="site-header__nav" aria-label="Primary">
-          <a className="site-header__link" href={site.anchors.how}>
-            How it works
-          </a>
           <div className="site-header__actions">{actions}</div>
         </nav>
       </div>

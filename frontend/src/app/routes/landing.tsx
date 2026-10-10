@@ -1,5 +1,7 @@
 import { Header } from '@/components/layouts/Header'
 import { ButtonLink } from '@/components/ui/ButtonLink'
+import { TextLink } from '@/components/ui/TextLink'
+import { Hero } from '@/features/hero/components/Hero'
 
 export function Landing() {
   return (
@@ -17,11 +19,14 @@ export function Landing() {
         <Header
           actions={
             <>
-              <ButtonLink variant="accent">Sign In</ButtonLink>
-              <ButtonLink variant="ghost">Sign up</ButtonLink>
+              <ButtonLink variant="ghost">Sign In</ButtonLink>
+              <ButtonLink variant="accent">Sign up</ButtonLink>
             </>
           }
         />
+        <main>
+          <Hero secondaryAction={<TextLink>Sign up</TextLink>} />
+        </main>
       </div>
     </>
   )

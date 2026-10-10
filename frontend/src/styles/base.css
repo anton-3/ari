@@ -102,6 +102,53 @@ button {
   border-color: var(--muted);
 }
 
+/* Text link: uppercase, up-right arrow, underline */
+.text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg);
+  transition: border-color 0.15s ease;
+}
+
+.text-link:hover {
+  border-bottom-color: var(--fg);
+}
+
+.text-link__arrow {
+  transition: transform 0.15s ease;
+}
+
+.text-link:hover .text-link__arrow {
+  transform: translate(2px, -2px);
+}
+
+/* Type */
+.display {
+  max-width: 13ch;
+  margin: 0;
+  font-size: clamp(2.6rem, 6.2vw, 5.4rem);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 34em;
+  font-size: clamp(1.05rem, 1.5vw, 1.3rem);
+  font-weight: 400;
+  color: var(--muted);
+}
+
 /* Site header */
 .site-header {
   position: sticky;
