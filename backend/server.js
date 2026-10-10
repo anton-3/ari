@@ -229,10 +229,10 @@ wss.on("connection", (ws) => {
           send({ type: "play", source: EGG_SOUND_URL(), loop: 1, interruptible: false, preemptible: false });
           setTimeout(() => send({ type: "end", handoffData: '{"reason":"bogos"}' }), EGG_SOUND_MS);
         } else if (isPhotoTrigger(msg.voicePrompt)) {
-          // First step: respond with the bogos sound, then wait for the caller's reaction.
+          // First step: Ari says "bogos binted", then waits for the caller's reaction.
           eggArmed = true;
           console.log(`[${callSid}] easter egg triggered`);
-          send({ type: "play", source: EGG_SOUND_URL(), loop: 1, interruptible: false, preemptible: false });
+          send({ type: "text", token: "Bogos binted.", last: true, interruptible: false });
         } else {
           respond(msg.voicePrompt);
         }
