@@ -83,7 +83,7 @@ const isPhotoTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
 };
-const CANES_URL = () => `https://${PUBLIC_HOST}/canes.mp3`;
+const CANES_URL = () => `https://${PUBLIC_HOST}/canes-ramp.mp3`;
 const isCanesTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\bcane'?s?\b/.test(t) && /\b(doordash|door dash|deliver|delivered|order|bring|get me|grab|uber ?eats)\b/.test(t);
