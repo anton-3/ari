@@ -66,9 +66,43 @@ PATCH /api/vulns/:id   body { status: "open"|"remediated" }
 GET /health
 -> { ok: true, mode, uptimeMs }
 
+GET /api/repograph
+-> { nodes: [{ id, path, dir, label, loc, kind }], edges: [{ from, to }], scannedAt }
+   // kind in: app/backend/telemetry ; one node per scanned source file.
+   // id/path = repo-relative path (e.g. "target-app/src/server.js"); label = basename;
+   // loc = line count. edges = textually-parsed import/require relationships
+   // (relative paths resolved to files in the set; externals ignored).
+   // Rescans at startup and every ~30s.
+
+GET /api/agents
+-> { agents: [{ id, type, label, status, targetNodeId, progress, spawnedAt, note }],
+     events: [{ ts, id, type, text, agentId?, agentType?, targetNodeId?, finding? }] }
+   // type in: scanner/log-watcher/verifier/remediator
+   // status in: idle/dispatched/working/reporting/done ; progress 0..1
+   // targetNodeId = a repograph node id (file) or topology node id
+   // events = capped activity log (deploy/done/finding/recall); a "finding" event
+   //   carries finding:{ id, title, severity, file, line, endpoint } referencing
+   //   a real SECURITY-NOTES item.
+
+POST /api/agents/deploy   body { count, type?, focus? }
+-> { ok: true, agents: [<new agent>, ...] }
+   // spawns `count` (1..50) simulated agents. type optional (one of the 4 types,
+   // else mixed). focus optional substring to bias target selection by path/label.
+   // Agents prefer files tied to documented AcmePay findings, else spread across
+   // the graph. SIMULATION ONLY — no real scanning or network activity.
+
+POST /api/agents/recall
+-> { ok: true, recalled, agents, events }   // winds active agents down to done/idle
+
+GET /api/reasoning?limit=50
+-> { lines: [{ ts, text }] }                // rolling buffer (~50) of Ari status lines
+
 WebSocket  ws://localhost:8090/ws
--> { type: "metrics", data: <same shape as GET /api/metrics> }   // every 1s
--> { type: "log",     data: <single log entry> }                 // as logs arrive
+-> { type: "metrics",   data: <same shape as GET /api/metrics> }    // every 1s
+-> { type: "log",       data: <single log entry> }                 // as logs arrive
+-> { type: "agents",    data: { agents, events } }                 // every 1s (same shape as GET /api/agents)
+-> { type: "reasoning", data: { ts, text } }                       // ~1 line / 2s, as lines appear
+   // On connect a client also receives one immediate "metrics" and one "agents" snapshot.
 ```
 
 CORS is enabled (permissive) so the dashboard can call from any origin.
@@ -79,3 +113,13 @@ CORS is enabled (permissive) so the dashboard can call from any origin.
   a seeded topology (internet -> WAF/edge -> load balancer -> 2 app nodes -> Postgres + Redis),
   and 3-5 seeded example vulnerabilities (mixed severities/statuses) referencing AcmePay.
 - No API keys or secrets required.
+
+### Agent swarm (simulation)
+
+`src/repograph.js`, `src/swarm.js` and `src/reasoning.js` add a simulated swarm of Ari's
+helper agents over a live scan of the team's own repo. Everything is in-memory and
+read-only: the repo scanner only reads source files, the swarm only mutates in-memory
+state on the 1s tick, and reasoning lines are flavor/status text. Nothing here runs code,
+scans, or sends any network traffic. Simulated "findings" reference real items from
+`target-app/SECURITY-NOTES.md` and are recorded into the existing vulns store (ids
+prefixed `AGT-VULN-`) via the local upsert, so they also appear in `GET /api/vulns`.
