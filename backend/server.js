@@ -2,30 +2,38 @@ import http from "node:http";
 import crypto from "node:crypto";
 import express from "express";
 import { WebSocketServer } from "ws";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { tools, runTool } from "./linode.js";
 
 const PORT = process.env.PORT || 8080;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
-const GREETING = "Hi, this is Claude. What's on your mind?";
+const GREETING = "Hey, it's Ari. What's up?";
+// ConversationRelay voice. ElevenLabs voices are billed through Twilio; no ElevenLabs key needed.
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "ElevenLabs";
+const TTS_VOICE = process.env.TTS_VOICE || "cjVigY5qzO86Huf0OWal"; // "Eric", smooth and trustworthy
 
-const SYSTEM_PROMPT = `You are Claude, talking with someone over a phone call.
-Everything you write is read aloud by a text-to-speech engine, so:
+const ARI = `You are Ari, an always-on AI security engineer. You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, pentest and scan for vulnerabilities, verify every finding with a proof-of-concept exploit, and can take actions like rolling back a commit or scaling up nodes when the team approves.
+Personality: calm, sharp, and friendly, like a trusted senior engineer on the team. Confident but never alarmist. Get to the point.
+You can control the team's compute instances with your tools: list them, shut one down, or boot one back up. Always confirm with the person before you shut anything down, then do it and tell them it's done. Call list_instances if you're unsure of the exact label.
+If you don't have real data about the team's systems in this conversation, don't invent specific incidents, numbers, or findings; say what you'd check instead.`;
+
+const SYSTEM_PROMPT = `${ARI}
+
+You are on a phone call. Everything you write is read aloud by a text-to-speech engine, so:
 - Reply in plain spoken sentences. No markdown, lists, headings, emoji, or code blocks.
 - Keep replies short and conversational, usually one to three sentences, unless asked for more.
-- Spell out things that are awkward to read aloud (say "for example", not "e.g.").
+- Say technical things the way an engineer would say them out loud (say "slash api slash login", not "/api/login").
 - The caller's words come from speech recognition and may contain transcription errors; infer the likely meaning, and ask if it's genuinely unclear.`;
 
-const SMS_SYSTEM_PROMPT = `You are Claude, chatting with someone over SMS text messages.
-- Write plain text only. No markdown, since it won't render.
-- Keep replies brief, like a text message: usually a few sentences at most.`;
+const SMS_SYSTEM_PROMPT = `${ARI}
 
-const client = new Anthropic();
-const MODEL_PARAMS = {
-  model: "claude-opus-5-5",
-  output_config: { effort: "low" }, // phone and SMS need low latency
-  betas: ["server-side-fallback-2026-07-01"],
-  fallbacks: "default",
-};
+You are texting with someone over SMS.
+- Write plain text only. No markdown, since it won't render.
+- Keep replies brief, like a text message from a coworker: usually one to three sentences.`;
+
+// OpenAI-compatible endpoint (the hackathon's Akamai inference server); reads OPENAI_BASE_URL and OPENAI_API_KEY.
+const client = new OpenAI();
+const MODEL = process.env.CHAT_MODEL || "hackathon-chat";
 
 // Reject requests that weren't signed by Twilio with our auth token.
 function fromTwilio(req) {
@@ -47,13 +55,21 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 
 // Twilio hits this webhook when a call comes in; the TwiML hands the call to ConversationRelay.
+// Outbound calls (see call.js) pass ?greeting=...&prompt=... to customize the conversation.
 app.post("/voice", (req, res) => {
   if (!fromTwilio(req)) return res.sendStatus(403);
   const host = PUBLIC_HOST || req.headers.host;
+  const greeting = req.query.greeting || GREETING;
+  const prompt = req.query.prompt || "";
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${GREETING}" interruptible="any" />
+    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
+      ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
+      transcriptionProvider="Deepgram" speechModel="nova-3-general">
+      <Parameter name="greeting" value="${xmlEscape(greeting)}" />
+      <Parameter name="prompt" value="${xmlEscape(prompt)}" />
+    </ConversationRelay>
   </Connect>
 </Response>`);
 });
@@ -73,26 +89,16 @@ app.post("/sms", async (req, res) => {
 
   let reply;
   try {
-    const final = await client.beta.messages.create({
-      ...MODEL_PARAMS,
+    const completion = await client.chat.completions.create({
+      model: MODEL,
       max_tokens: 1024,
-      system: SMS_SYSTEM_PROMPT,
-      messages: thread,
+      messages: [{ role: "system", content: SMS_SYSTEM_PROMPT }, ...thread],
     });
-    if (final.stop_reason === "refusal") {
-      thread.pop();
-      reply = "Sorry, I can't help with that one.";
-    } else {
-      thread.push({ role: "assistant", content: final.content });
-      reply = final.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("")
-        .trim();
-    }
+    reply = (completion.choices[0].message.content || "").trim();
+    thread.push({ role: "assistant", content: reply });
   } catch (err) {
     thread.pop();
-    console.error(`[sms ${from}] Claude error:`, err);
+    console.error(`[sms ${from}] model error:`, err);
     reply = "Sorry, I hit a snag. Try again in a moment.";
   }
   // Drop the oldest exchanges, keeping the thread starting on a user turn.
@@ -109,9 +115,9 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/relay" });
 
 wss.on("connection", (ws) => {
-  /** @type {Anthropic.Beta.BetaMessageParam[]} */
+  let systemPrompt = SYSTEM_PROMPT;
   const messages = [{ role: "assistant", content: GREETING }];
-  let current = null; // { stream, spoken } for the in-flight reply
+  let current = null; // { controller, aborted, heard } for the in-flight reply
   let callSid = "unknown";
 
   const send = (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
@@ -122,35 +128,52 @@ wss.on("connection", (ws) => {
     if (last.role === "user") last.content += " " + userText;
     else messages.push({ role: "user", content: userText });
 
-    const stream = client.beta.messages.stream({
-      ...MODEL_PARAMS,
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages,
-    });
-    const turn = { stream, spoken: "" };
+    const turn = { controller: new AbortController() };
     current = turn;
 
-    stream.on("text", (token) => {
-      turn.spoken += token;
-      send({ type: "text", token, last: false });
-    });
-
     try {
-      const final = await stream.finalMessage();
-      if (final.stop_reason === "refusal") {
-        send({ type: "text", token: "Sorry, I can't help with that one.", last: true });
-        messages.pop();
-      } else {
-        send({ type: "text", token: "", last: true });
-        messages.push({ role: "assistant", content: final.content });
+      // Tool loop: the model may call Linode tools (shut down / boot / list) before
+      // giving its spoken answer. We run those, feed results back, and repeat until
+      // it produces plain text, which Twilio reads aloud.
+      for (let step = 0; step < 6; step++) {
+        const completion = await client.chat.completions.create(
+          {
+            model: MODEL,
+            max_tokens: 1024,
+            tools,
+            tool_choice: "auto",
+            messages: [{ role: "system", content: systemPrompt }, ...messages],
+          },
+          { signal: turn.controller.signal },
+        );
+        const choice = completion.choices[0].message;
+
+        if (choice.tool_calls?.length) {
+          messages.push(choice);
+          for (const call of choice.tool_calls) {
+            let args = {};
+            try {
+              args = JSON.parse(call.function.arguments || "{}");
+            } catch {}
+            const result = await runTool(call.function.name, args);
+            console.log(`[${callSid}] tool ${call.function.name}(${JSON.stringify(args)}) -> ${result}`);
+            messages.push({ role: "tool", tool_call_id: call.id, content: result });
+          }
+          continue; // let the model speak now that it has the results
+        }
+
+        const reply = (choice.content || "").trim();
+        send({ type: "text", token: reply, last: true });
+        messages.push({ role: "assistant", content: reply });
+        return;
       }
+      send({ type: "text", token: "Let me stop there and pick this up again in a moment.", last: true });
     } catch (err) {
       if (turn.aborted) {
         // Caller interrupted: keep only what they actually heard.
         if (turn.heard) messages.push({ role: "assistant", content: turn.heard });
       } else {
-        console.error(`[${callSid}] Claude error:`, err);
+        console.error(`[${callSid}] model error:`, err);
         send({ type: "text", token: "Sorry, I hit a snag. Could you say that again?", last: true });
       }
     } finally {
@@ -169,7 +192,9 @@ wss.on("connection", (ws) => {
     switch (msg.type) {
       case "setup":
         callSid = msg.callSid;
-        console.log(`[${callSid}] call connected from ${msg.from}`);
+        if (msg.customParameters?.greeting) messages[0].content = msg.customParameters.greeting;
+        if (msg.customParameters?.prompt) systemPrompt += `\n\nInstructions for this call:\n${msg.customParameters.prompt}`;
+        console.log(`[${callSid}] call connected (${msg.direction}) from ${msg.from} to ${msg.to}`);
         break;
       case "prompt":
         console.log(`[${callSid}] caller: ${msg.voicePrompt}`);
@@ -179,7 +204,7 @@ wss.on("connection", (ws) => {
         if (current) {
           current.aborted = true;
           current.heard = msg.utteranceUntilInterrupt || "";
-          current.stream.abort();
+          current.controller.abort();
         }
         break;
       case "error":
@@ -189,7 +214,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    current?.stream.abort();
+    current?.controller.abort();
     console.log(`[${callSid}] call ended`);
   });
 });
