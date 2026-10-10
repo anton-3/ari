@@ -14,6 +14,8 @@ export default defineConfig({
         // Existing landing page entry (must stay) + the self-contained dashboard.
         main: resolve(rootDir, 'index.html'),
         dashboard: resolve(rootDir, 'dashboard.html'),
+        // Self-contained animated swarm-graph page (additive, isolated).
+        graph: resolve(rootDir, 'graph.html'),
       },
     },
   },
