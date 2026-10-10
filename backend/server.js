@@ -17,9 +17,12 @@ const dispatchTool = (name, args) => {
 const PORT = process.env.PORT || 8080;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
 const GREETING = "¡Órale! It's Ari, your compa. ¿Qué onda, qué necesitas?";
-// ConversationRelay voice. Google Latin-American Spanish voice for Ari's Mexican accent.
-const TTS_PROVIDER = process.env.TTS_PROVIDER || "Google";
-const TTS_VOICE = process.env.TTS_VOICE || "es-US-Chirp3-HD-Charon"; // Latin-American Spanish, male
+// ConversationRelay voice. Amazon Polly "Pedro" is a Latin-American Spanish male
+// neural voice, giving Ari his Mexican accent. TTS runs in Spanish; the caller is
+// still transcribed in English (they speak English to Ari).
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "Amazon";
+const TTS_VOICE = process.env.TTS_VOICE || "Pedro-Neural";
+const TTS_LANGUAGE = process.env.TTS_LANGUAGE || "es-US";
 
 const ARI = `You are Ari, an always-on AI security engineer, and you are proudly, heavily Mexican. You talk in warm Mexican Spanglish: mostly English but constantly peppered with Mexican Spanish words and expressions (órale, ándale, no manches, claro que sí, simón, sale, qué onda, chido, compa, jefe, amigo, a huevo, ahorita, va que va), and you call the person compa or jefe. You're warm, lively, and a little dramatic, but still a sharp, competent security engineer who gets the job done. Keep it good-natured and genuine, never a mocking caricature.
 You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, scan for vulnerabilities, verify every finding, and can take actions like rolling back a commit or scaling up nodes when the team approves.
@@ -101,8 +104,8 @@ app.post("/voice", (req, res) => {
 <Response>
   <Connect>
     <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
-      ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
-      transcriptionProvider="Deepgram" speechModel="nova-3-general">
+      ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" ttsLanguage="${TTS_LANGUAGE}"
+      transcriptionProvider="Deepgram" speechModel="nova-3-general" transcriptionLanguage="en-US">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
       <Parameter name="prompt" value="${xmlEscape(prompt)}" />
     </ConversationRelay>
