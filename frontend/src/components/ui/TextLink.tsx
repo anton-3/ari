@@ -1,7 +1,7 @@
-import type { ComponentPropsWithoutRef } from 'react'
+import type { ComponentPropsWithRef } from 'react'
 
-type AnchorProps = ComponentPropsWithoutRef<'a'> & { href: string }
-type ButtonProps = ComponentPropsWithoutRef<'button'> & { href?: undefined }
+type AnchorProps = ComponentPropsWithRef<'a'> & { href: string }
+type ButtonProps = ComponentPropsWithRef<'button'> & { href?: undefined }
 
 type TextLinkProps = AnchorProps | ButtonProps
 

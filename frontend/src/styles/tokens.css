@@ -18,9 +18,13 @@
   --fg-2: var(--grey-5);
   --fg: var(--grey-6);
   --bar: rgba(0, 0, 0, 0.85);
+  --scrim: rgba(0, 0, 0, 0.7);
 
   --accent: #00a4eb;
   --accent-hi: #33b6ef;
+
+  --danger: #e8692e;
+  --danger-hi: #f3874f;
 
   --font: 'Instrument Sans', Arial, sans-serif;
 

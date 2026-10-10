@@ -1,6 +1,5 @@
 import { Header } from '@/components/layouts/Header'
-import { ButtonLink } from '@/components/ui/ButtonLink'
-import { TextLink } from '@/components/ui/TextLink'
+import { AuthTrigger } from '@/features/auth/components/AuthTrigger'
 import { Hero } from '@/features/hero/components/Hero'
 
 export function Landing() {
@@ -19,13 +18,23 @@ export function Landing() {
         <Header
           actions={
             <>
-              <ButtonLink variant="ghost">Sign In</ButtonLink>
-              <ButtonLink variant="accent">Sign up</ButtonLink>
+              <AuthTrigger mode="sign-in" variant="ghost">
+                Sign In
+              </AuthTrigger>
+              <AuthTrigger mode="sign-up" variant="accent">
+                Sign up
+              </AuthTrigger>
             </>
           }
         />
         <main>
-          <Hero secondaryAction={<TextLink>Sign up</TextLink>} />
+          <Hero
+            secondaryAction={
+              <AuthTrigger mode="sign-up" variant="text">
+                Sign up
+              </AuthTrigger>
+            }
+          />
         </main>
       </div>
     </>
