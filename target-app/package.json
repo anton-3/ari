@@ -1,0 +1,21 @@
+{
+  "name": "acmepay",
+  "version": "1.2.0",
+  "description": "AcmePay - payments & checkout API (DEMO target app with intentional vulnerabilities)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "seed": "node seed.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
