@@ -1,6 +1,7 @@
 import { Header } from '@/components/layouts/Header'
 import { AuthTrigger } from '@/features/auth/components/AuthTrigger'
 import { Hero } from '@/features/hero/components/Hero'
+import { HowItWorks } from '@/features/how-it-works/components/HowItWorks'
 
 export function Landing() {
   return (
@@ -35,6 +36,7 @@ export function Landing() {
               </AuthTrigger>
             }
           />
+          <HowItWorks />
         </main>
       </div>
     </>

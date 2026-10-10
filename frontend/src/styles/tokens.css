@@ -25,6 +25,10 @@
 
   --danger: #e8692e;
   --danger-hi: #f3874f;
+  --danger-soft: rgba(232, 105, 46, 0.4);
+  --ok: #7fcf9a;
+  --warn: #e6b450;
+  --steel: #8ea6c9;
 
   --font: 'Instrument Sans', Arial, sans-serif;
 

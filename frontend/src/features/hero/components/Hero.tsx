@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { ButtonLink } from '@/components/ui/ButtonLink'
 import { site } from '@/config/site'
+import { scrollToSection } from '@/utils/scrollToSection'
 import './hero.css'
 
 type HeroProps = {
@@ -38,7 +39,7 @@ export function Hero({ secondaryAction }: HeroProps) {
           Ari does blank.
         </p>
         <div className="hero__actions">
-          <ButtonLink href={site.anchors.demo}>See a demo</ButtonLink>
+          <ButtonLink onClick={() => scrollToSection(site.sections.howPanel, 'center')}>See a demo</ButtonLink>
           {secondaryAction}
         </div>
       </div>
