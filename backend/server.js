@@ -273,6 +273,10 @@ wss.on("connection", (ws) => {
           eggArmed = true;
           console.log(`[${callSid}] easter egg triggered`);
           send({ type: "text", token: "Bogos binted.", last: true, interruptible: false });
+        } else if (/hold music/i.test(msg.voicePrompt || "")) {
+          // Direct trigger for testing the hold music.
+          console.log(`[${callSid}] hold music test`);
+          send({ type: "play", source: HOLD_URL(), loop: 1, interruptible: true, preemptible: true });
         } else if (isCanesTrigger(msg.voicePrompt)) {
           // First step: Ari plays along, then the caller's next line triggers the crashout.
           canesArmed = true;
