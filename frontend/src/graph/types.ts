@@ -104,13 +104,50 @@ export interface Agent {
   note?: string
 }
 
+export interface FindingDetail {
+  id?: string
+  title?: string
+  file?: string
+  line?: number
+  severity?: 'critical' | 'high' | 'medium' | 'low' | string
+  endpoint?: string
+}
+
 export interface AgentEvent {
-  ts: number
+  ts: number | string
   agentId: string
   kind: 'finding' | 'spawn' | 'recall' | 'complete' | string
   text: string
   nodeId?: string
+  // The service tags the target as `targetNodeId` and nests the finding object.
+  targetNodeId?: string
+  finding?: FindingDetail
   severity?: 'critical' | 'high' | 'medium' | 'low' | string
+}
+
+// ---- Vulns (/api/vulns, optional) -----------------------------------------
+export interface Vuln {
+  id: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | string
+  title: string
+  project?: string
+  endpoint?: string
+  file?: string
+  status: 'open' | 'investigating' | 'remediated' | string
+  discoveredAt?: number | string
+}
+
+export interface VulnsResponse {
+  vulns: Vuln[]
+}
+
+// A single open problem resolved onto the graph, with its severity.
+export interface OpenFinding {
+  key: string
+  nodeId?: string
+  file?: string
+  severity: string
+  ts: number
 }
 
 export interface AgentsResponse {

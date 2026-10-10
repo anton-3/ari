@@ -1,13 +1,17 @@
-/* Self-contained styles for the Ari swarm graph page. Scoped under .graph-page
-   so nothing here can leak into the landing page or the dashboard. */
+/* Ari swarm map — instrument / mission-control theme.
+   Scoped under .gx so nothing leaks into the landing page or dashboard. */
 
 :root {
-  --g-cyan: #22d3ee;
-  --g-teal: #2dd4bf;
-  --g-violet: #a78bfa;
-  --g-amber: #fbbf24;
-  --g-red: #f87171;
-  --g-green: #34d399;
+  --gx-bg: #060607;
+  --gx-ink: #0b0c0d;
+  --gx-acc: #59c9a5; /* phosphor accent — single accent */
+  --gx-acc-dim: #2f7d66;
+  --gx-red: #ff5550; /* reserved for trouble */
+  --gx-amber: #e0a63a;
+  --gx-text: #c6ccc8;
+  --gx-dim: #767d78;
+  --gx-hair: rgba(150, 160, 156, 0.16);
+  --gx-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
 
 html,
@@ -16,31 +20,46 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #05060a;
+  background: var(--gx-bg);
 }
 
 body {
   overflow: hidden;
 }
 
-.graph-page {
+.gx {
   position: fixed;
   inset: 0;
   overflow: hidden;
-  background: #05060a;
-  color: #e2f0ff;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--gx-bg);
+  color: var(--gx-text);
+  font-family: var(--gx-mono);
+  font-feature-settings: 'tnum' 1;
   -webkit-font-smoothing: antialiased;
 }
 
-.graph-canvas {
-  position: absolute;
-  inset: 0;
+.gx canvas {
   display: block;
 }
 
-/* ---- Top bar ------------------------------------------------------------ */
-.graph-topbar {
+/* subtle instrument scanline overlay — flat, no blur */
+.gx::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.015) 0px,
+    rgba(255, 255, 255, 0.015) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 2;
+}
+
+/* ---- Top status bar ----------------------------------------------------- */
+.gx-bar {
   position: absolute;
   top: 0;
   left: 0;
@@ -48,196 +67,181 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
-  pointer-events: none;
-  z-index: 3;
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--gx-hair);
+  background: rgba(6, 6, 7, 0.82);
+  z-index: 5;
 }
 
-.graph-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-}
-
-.graph-brand-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--g-cyan);
-  box-shadow: 0 0 14px 2px var(--g-cyan);
-  align-self: center;
-  animation: g-pulse 2.4s ease-in-out infinite;
-}
-
-.graph-brand-name {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.graph-brand-sub {
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(150, 175, 205, 0.6);
-}
-
-.graph-source {
+.gx-id {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(150, 175, 205, 0.75);
-  padding: 6px 12px;
-  border: 1px solid rgba(120, 160, 210, 0.16);
-  border-radius: 999px;
-  background: rgba(10, 14, 22, 0.5);
-  backdrop-filter: blur(6px);
+  gap: 10px;
 }
 
-.graph-source-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--g-green);
+.gx-id-mark {
+  width: 8px;
+  height: 8px;
+  background: var(--gx-acc);
+  box-shadow: 0 0 6px var(--gx-acc);
 }
 
-.graph-source--mock .graph-source-dot {
-  background: var(--g-amber);
-}
-.graph-source--connecting .graph-source-dot {
-  background: rgba(150, 175, 205, 0.6);
-}
-.graph-source--polling .graph-source-dot {
-  background: var(--g-cyan);
-}
-
-/* ---- HUD stats ---------------------------------------------------------- */
-.graph-hud {
-  position: absolute;
-  top: 70px;
-  left: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.graph-stat {
-  min-width: 118px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(120, 160, 210, 0.12);
-  background: linear-gradient(180deg, rgba(14, 20, 32, 0.6), rgba(8, 11, 18, 0.5));
-  backdrop-filter: blur(8px);
-  border-left-width: 3px;
-}
-
-.graph-stat--cyan { border-left-color: var(--g-cyan); }
-.graph-stat--teal { border-left-color: var(--g-teal); }
-.graph-stat--violet { border-left-color: var(--g-violet); }
-.graph-stat--amber { border-left-color: var(--g-amber); }
-.graph-stat--red { border-left-color: var(--g-red); }
-
-.graph-stat-value {
-  font-size: 22px;
+.gx-id-name {
   font-weight: 700;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  text-transform: capitalize;
+  letter-spacing: 0.32em;
+  font-size: 13px;
+  color: var(--gx-text);
 }
 
-.graph-stat-label {
-  margin-top: 2px;
-  font-size: 10px;
+.gx-id-sub {
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(150, 175, 205, 0.6);
+  color: var(--gx-dim);
 }
 
-/* ---- Reasoning caption -------------------------------------------------- */
-.graph-caption {
+.gx-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gx-feed {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--gx-dim);
+}
+
+.gx-feed-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--gx-acc);
+}
+
+.gx-feed--mock .gx-feed-dot { background: var(--gx-amber); }
+.gx-feed--connecting .gx-feed-dot { background: var(--gx-dim); }
+
+.gx-toggle {
+  display: flex;
+  border: 1px solid var(--gx-hair);
+}
+
+.gx-toggle button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--gx-hair);
+  color: var(--gx-dim);
+  font-family: var(--gx-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.gx-toggle button:first-child { border-left: 0; }
+
+.gx-toggle button.is-on {
+  background: var(--gx-acc);
+  color: #04120d;
+  font-weight: 700;
+}
+
+/* ---- HUD readout strip (instrument panel) ------------------------------- */
+.gx-hud {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-bottom: 1px solid var(--gx-hair);
+  background: rgba(6, 6, 7, 0.7);
+  z-index: 4;
+}
+
+.gx-read {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 16px;
+  border-right: 1px solid var(--gx-hair);
+}
+
+.gx-read-k {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--gx-dim);
+}
+
+.gx-read-v {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gx-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.gx-read.is-warn .gx-read-v { color: var(--gx-red); }
+.gx-read.is-warn .gx-read-k { color: var(--gx-amber); }
+
+/* ---- Reasoning teletype log --------------------------------------------- */
+.gx-log {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 22px 32px 30px;
-  background: linear-gradient(0deg, rgba(5, 6, 10, 0.92) 30%, rgba(5, 6, 10, 0));
-  z-index: 3;
-  pointer-events: none;
-}
-
-.graph-caption-label {
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--g-cyan);
-  margin-bottom: 8px;
-  opacity: 0.85;
-}
-
-.graph-caption-stream {
+  max-height: 168px;
+  overflow: hidden;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--gx-hair);
+  background: linear-gradient(0deg, rgba(6, 6, 7, 0.94) 55%, rgba(6, 6, 7, 0));
+  z-index: 4;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-height: 70px;
-  justify-content: flex-end;
+  gap: 2px;
 }
 
-.graph-caption-line {
-  margin: 0;
-  font-size: 15px;
+.gx-log-line {
+  display: flex;
+  gap: 12px;
+  font-size: 12.5px;
   line-height: 1.5;
-  max-width: 820px;
-  transition: opacity 0.6s ease, transform 0.6s ease;
-  animation: g-rise 0.6s ease both;
+  color: var(--gx-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.graph-caption-line.is-current {
-  color: #e8f4ff;
-  font-weight: 500;
+.gx-log-line.is-head { color: var(--gx-text); }
+
+.gx-log-ts { color: var(--gx-acc-dim); }
+.gx-log-line.is-head .gx-log-ts { color: var(--gx-acc); }
+
+.gx-log-src {
+  color: var(--gx-acc);
+  text-transform: lowercase;
 }
 
-.graph-caption-line.is-faded {
-  color: rgba(150, 175, 205, 0.4);
-  font-size: 13.5px;
-}
-
-@keyframes g-rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes g-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+.gx-log-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- Responsive --------------------------------------------------------- */
 @media (max-width: 720px) {
-  .graph-hud {
-    flex-direction: row;
-    flex-wrap: wrap;
-    top: auto;
-    bottom: 140px;
-    left: 16px;
-    right: 16px;
-    gap: 8px;
-  }
-  .graph-stat {
-    min-width: 0;
-    flex: 1 1 28%;
-    padding: 7px 10px;
-  }
-  .graph-stat-value { font-size: 17px; }
-  .graph-caption { padding: 16px 16px 20px; }
-  .graph-caption-line { font-size: 13.5px; }
+  .gx-id-sub { display: none; }
+  .gx-read { padding: 6px 11px; }
+  .gx-read-v { font-size: 12px; }
+  .gx-log { max-height: 120px; }
+  .gx-log-line { font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .graph-brand-dot { animation: none; }
-  .graph-caption-line { animation: none; }
+  .gx-id-mark { box-shadow: none; }
+  .gx::after { display: none; }
 }
