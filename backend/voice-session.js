@@ -9,8 +9,10 @@ export function voiceLog(session, event, fields = {}) {
 }
 
 export class CallSession {
-  constructor({ callSid, greeting = GREETING, prompt = "", complete, dispatch, log = voiceLog }) {
-    Object.assign(this, { callSid, greeting, complete, dispatch, log });
+  constructor({ callSid, greeting = GREETING, prompt = "", complete, dispatch, log = voiceLog, onClose }) {
+    Object.assign(this, { callSid, greeting, complete, dispatch, log, onClose });
+    this.startedAt = new Date();
+    this.actionLog = []; // every tool Ari ran this call, for the postmortem
     this.token = randomBytes(32).toString("base64url");
     this.systemPrompt = SYSTEM_PROMPT + (prompt ? `\n\nInstructions for this call:\n${prompt}` : "");
     this.messages = [];
@@ -134,6 +136,7 @@ export class CallSession {
               // A dispatched operation is never retried or discarded on interruption.
               try { result = await this.dispatch(call.function.name, args); }
               catch { result = "Tool failed; outcome may be uncertain. Do not retry automatically. Verify current state first."; }
+              this.actionLog.push({ at: new Date().toISOString(), name: call.function.name, args, result: typeof result === "string" ? result : JSON.stringify(result) });
               if (!READ_ONLY_TOOLS.has(call.function.name)) this.operations.set(key, typeof result === "string" ? result : JSON.stringify(result));
               this.log(this, "tool_complete", { name: call.function.name, ms: performance.now() - started });
             }
@@ -190,6 +193,7 @@ export class CallSession {
   }
 
   close() {
+    if (this.alive) this.onClose?.(this);
     this.alive = false;
     this.current?.controller.abort();
     this.transport?.dispose();

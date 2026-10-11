@@ -10,6 +10,7 @@ import { placeIncidentCall, DEMO_PHONE } from "./incident.js";
 import { SMS_SYSTEM_PROMPT, GREETING } from "./voice-prompts.js";
 import { voiceConfig, xmlEscape, relayTwiml, mediaTwiml, fallbackUrl } from "./voice-config.js";
 import { CallSession, SessionStore, voiceLog } from "./voice-session.js";
+import { writeAndSendPostmortem, needsPostmortem } from "./postmortem.js";
 import { RelayTransport, MediaTransport } from "./voice-transports.js";
 import { providerFetch } from "./voice-http.js";
 
@@ -44,6 +45,13 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
   const tc = twilioClient || (config.twilioSid && config.twilioToken ? twilio(config.twilioSid, config.twilioToken, { timeout: 10000, autoRetry: false }) : null);
   const store = new SessionStore((data) => new CallSession({
     ...data, dispatch, log,
+    // If Ari changed anything on the call, write the postmortem and email the team.
+    onClose: (s) => {
+      if (!needsPostmortem(s.actionLog)) return;
+      writeAndSendPostmortem({ client, model, callSid: s.callSid, messages: s.messages, actions: s.actionLog, startedAt: s.startedAt })
+        .then((r) => console.log(`[${s.callSid}] postmortem ${r.ok ? "emailed" : "saved, email failed: " + r.error} -> ${r.file}`))
+        .catch((e) => console.error(`[${s.callSid}] postmortem failed:`, e.message));
+    },
     complete: async (messages, signal) => {
       const response = await client.chat.completions.create({ model, max_tokens: 1024, tools, tool_choice: "auto", messages }, { signal, timeout: 30000, maxRetries: 0 });
       return response.choices[0].message;
