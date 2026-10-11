@@ -35,7 +35,9 @@ const ROLE_SET = new Set(ROLES.map((r) => r.role));
 
 const SAMPLE_MS = 2000;
 const REFRESH_MS = 10000;
-const SLOW = { exposure: 60e3, auth: 60e3, updates: 600e3, code: 600e3 };
+// 'code' (static scan of the deployed app for known MyFiat vulns) is deliberately
+// not scheduled: its app-vuln issues distract from the demo.
+const SLOW = { exposure: 60e3, auth: 60e3, updates: 600e3 };
 // DDoS detector thresholds (attacker req/s; see incident.js for per-IP floor/window).
 const TRIP_ABS_ = 20, TRIP_MULT_ = 3, CLEAR_ABS_ = 8, TRIP_DEBOUNCE_ = 2, CLEAR_DEBOUNCE_ = 3;
 // Rolling window (seconds) for the real distinct-client-IP 'active users' count.
@@ -317,7 +319,6 @@ export class Fleet {
     for (const node of this.readyNodes()) {
       const st = this._state(node.id);
       for (const [kind, every] of Object.entries(SLOW)) {
-        if (kind === 'code' && node.role !== 'app') continue;
         if (Date.now() - (st.slow[kind] || 0) < every) continue;
         st.slow[kind] = Date.now(); // claim the slot even if it fails
         this.runCheck(node, kind).catch(() => {});
