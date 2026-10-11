@@ -155,7 +155,7 @@ const SCENES: Scene[] = [
     focus: 'api',
     status: ['ON CALL', 'hot'],
     call: 'ringing',
-    thought: 'Calling Maya Chen, primary on-call',
+    thought: 'Calling Thomas Waller, primary on-call',
     summary: 'Waiting for a human yes',
   }),
   scene({
