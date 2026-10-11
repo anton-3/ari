@@ -2,6 +2,7 @@
 // The telemetry tools talk to the telemetry service so Ari can read live traffic on a
 // call and post findings that show up on the dashboard in real time.
 const TELEMETRY_URL = process.env.TELEMETRY_URL || "http://localhost:8090";
+import { demoJobs, narrate } from './demo-jobs.js';
 
 async function tget(path) {
   const res = await fetch(`${TELEMETRY_URL}${path}`, { signal: AbortSignal.timeout(4000) });
@@ -13,7 +14,7 @@ async function tpost(path, body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`telemetry ${res.status}`);
   return res.json();
@@ -115,7 +116,7 @@ export const tools = [
     function: {
       name: "block_ips",
       description:
-        "Ban source IP addresses at the load balancer during an incident (e.g. a denial-of-service flood). If you omit ips, the current attacking IPs from the live incident are banned.",
+        "Ban the latest retained incident's source IP addresses at the load balancer. After approval, call with empty arguments {}; the incident is resolved internally. Returns the background operation state.",
       parameters: {
         type: "object",
         properties: {
@@ -143,7 +144,7 @@ export const tools = [
     function: {
       name: "scale_web_app",
       description:
-        "Add another node to serve the web app (MyFiat), e.g. to absorb a traffic surge. It boots on our cloud and joins the load balancer automatically.",
+        "Activate the prepared web-03 node on Akamai Cloud to serve MyFiat. Returns promptly while health checks and joining the reverse proxy continue in the background. Use for requests to spin up another web node.",
       parameters: {
         type: "object",
         properties: {
@@ -185,7 +186,7 @@ export const tools = [
   },
 ];
 
-export async function runTool(name, args) {
+export async function runTool(name, args = {}, context = {}) {
   try {
     if (name === "deploy_agents") {
       const count = Math.max(1, Math.min(20, parseInt(args.count, 10) || 1));
@@ -213,7 +214,8 @@ export async function runTool(name, args) {
     }
     if (name === "get_live_metrics") {
       const m = await tget("/api/metrics");
-      return `Live right now: ${Math.round(m.rps)} requests a second, ${(m.errorRate * 100).toFixed(1)} percent errors, ${Math.round(m.latencyMs)} millisecond latency, ${m.activeUsers} active users. Traffic pattern looks ${m.mode === "surge" ? "abnormal, like an attack" : "normal"}.`;
+      if (m.stale) return 'Request measurements are currently unavailable or stale.';
+      return `Live right now: ${Math.round(m.requestsPerMinute)} requests per minute, ${m.requestsLast180s} requests in the last three minutes, ${(m.errorRate * 100).toFixed(1)} percent server errors. Traffic pattern looks ${m.mode === "surge" ? "abnormal, like an attack" : "normal"}.`;
     }
     if (name === "report_vulnerability") {
       await tpost("/api/vulns", {
@@ -237,31 +239,24 @@ export async function runTool(name, args) {
       return `Active incident on ${inc.label || "the load balancer"}: about ${Math.round(inc.reqPerSec)} requests a second, baseline is ${Math.round(inc.baselineRps || 0)}. Looks like a denial-of-service flood from ${ips.length} source${ips.length === 1 ? "" : "s"}: ${ips.join(", ")}.`;
     }
     if (name === "block_ips") {
-      let ips = Array.isArray(args.ips) ? args.ips.filter(Boolean) : [];
-      if (!ips.length) {
-        const inc = await tget("/api/fleet/incident").catch(() => ({}));
-        ips = (inc.attackerIps || []).map((a) => a.ip);
-      }
-      if (!ips.length) return "No IPs to ban — I couldn't find any attacking addresses in the current incident.";
-      const data = await tpost("/api/fleet/block-ips", { ips });
-      const blocked = data.blocked || ips;
-      return `Banned ${blocked.join(", ")} at the load balancer. That traffic is being dropped now, and the request rate should settle.`;
+      const inc = context.incidentId ? { id: context.incidentId } : await tget('/api/fleet/incident');
+      if (!inc.id) return 'There is no retained incident to ban.';
+      const job = demoJobs.start(`block:${inc.id}`, async () => {
+        await narrate('Approval received. Applying the incident IP blocklist at the reverse proxy.');
+        return tpost('/api/fleet/block-ips', { ips: args.ips, incidentId: inc.id });
+      });
+      return job.status === 'running' ? 'Applying the incident IP bans now. I will confirm completion on the dashboard.' : JSON.stringify(job);
     }
     if (name === "scale_web_app") {
-      const count = Math.max(1, Math.min(5, parseInt(args.count, 10) || 1));
-      const made = [];
-      for (let i = 0; i < count; i++) {
-        const r = await tpost("/api/fleet/nodes", { role: "app" });
-        if (r.node) made.push(r.node.label || r.node.id);
-      }
-      if (!made.length) return "I couldn't add a node right now — the fleet may be at capacity.";
-      return `Spinning up ${made.length} more app node${made.length > 1 ? "s" : ""} on the cloud (${made.join(", ")}). ${made.length > 1 ? "They're" : "It's"} booting and will join the load balancer automatically in a few minutes.`;
+      if (args.count != null && Number(args.count) !== 1) return 'The prepared demo supports activating one additional web node.';
+      const r = await tpost('/api/fleet/activate-web', { incidentId: context.incidentId });
+      return `web-03 activation ${r.operation.status} on Akamai Cloud. The prepared node is being checked and will join the reverse proxy as soon as it is ready.`;
     }
     if (name === "open_rate_limit_pr") {
       const { openRateLimitPr } = await import("./rate-limit-pr.js");
-      const r = await openRateLimitPr({ note: args.note || "" });
-      if (!r.ok) return `I couldn't open the PR: ${r.error}. I'll flag it and we can do it manually.`;
-      return `Done — I pushed the rate-limiting change to branch ${r.branch} and opened the pull request. I've texted you the link${r.url ? "" : " (PR created)"}.`;
+      const key = context.incidentId || context.callSid || 'manual';
+      const job = demoJobs.start(`pr:${key}`, () => openRateLimitPr({ note: args.note || '', to: context.recipient }));
+      return job.status === 'running' ? 'I am creating the rate-limiting branch and pull request now. I will text the link when it is ready; this continues after we hang up.' : JSON.stringify(job);
     }
     if (name === "block_ips_LEGACY_UNUSED") {
       const ips = (args.ips || []).join(", ");

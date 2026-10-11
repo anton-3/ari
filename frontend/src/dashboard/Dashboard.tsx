@@ -7,6 +7,7 @@ import { InfrastructureMap } from './components/InfrastructureMap'
 import { UsersPanel } from './components/UsersPanel'
 import { FindingsPanel, FindingRows } from './components/FindingsPanel'
 import { AriConsole } from './components/AriConsole'
+import { DemoReset } from './components/DemoReset'
 import type { FeedSource, Vuln } from './types'
 
 type View = 'incidents' | 'findings' | 'agents' | 'integrations' | 'finding'
@@ -190,21 +191,7 @@ export default function Dashboard() {
           </nav>
         </div>
         <div className="dashboard-header-right">
-          <span
-            className="feed-status"
-            title={
-              source === 'live'
-                ? 'Connected to telemetry over WebSocket; the service generates demo traffic'
-                : source === 'mock'
-                  ? 'Telemetry is unavailable; showing built-in demo data and retrying'
-                  : source === 'offline'
-                    ? 'Connection lost; showing the last telemetry snapshot'
-                    : 'Telemetry connection status'
-            }
-          >
-            <i className={`status-square ${source}`} />
-            {FEED_LABELS[source]}
-          </span>
+          <DemoReset source={source} />
         </div>
       </header>
       <main className="dashboard-main">

@@ -8,6 +8,7 @@ import * as linode from './linode.js';
 import * as actions from './actions.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { providerFetch } from './voice-http.js';
+import { INCIDENT_GREETING, incidentPrompt } from './incident.js';
 
 const config = voiceConfig({ ...process.env, ARI_VOICE_STACK: 'custom' });
 const client = new OpenAI({ fetch: providerFetch });
@@ -18,6 +19,7 @@ let transport;
 let audioBytes = 0;
 const session = new CallSession({
   callSid: 'synthetic-provider-smoke',
+  ...(process.argv.includes('--incident-greeting') ? { greeting: INCIDENT_GREETING, prompt: incidentPrompt() } : {}),
   log: (_s, event, fields) => {
     const item = { event, ...fields }; events.push(item); console.log(JSON.stringify(item));
   },
@@ -41,6 +43,12 @@ transport = new MediaTransport(session, ws, 'synthetic-stream', config, {
   end: async () => session.close(), release() {},
 });
 session.attach(transport);
+if (process.argv.includes('--answer-during-greeting')) {
+  transport.dg.once('ready', () => {
+    transport.dg.emit('speechStarted');
+    transport.dg.emit('utterance', 'Hello Ari, you are on speaker.', 0);
+  });
+}
 async function waitFor(check, timeout = 45000) {
   const deadline = Date.now() + timeout;
   while (!check()) {
@@ -51,6 +59,7 @@ async function waitFor(check, timeout = 45000) {
 }
 try {
   await waitFor(() => transport.ready);
+  await waitFor(() => !session.running);
   for (const text of ['Hello Ari. Please tell me your name.', 'Please say the word MyFiat.']) {
     const before = session.messages.filter((m) => m.role === 'user').length;
     const signal = new AbortController().signal;

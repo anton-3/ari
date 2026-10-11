@@ -6,19 +6,22 @@ import OpenAI from "openai";
 import twilio from "twilio";
 import * as linode from "./linode.js";
 import * as actions from "./actions.js";
-import { placeIncidentCall, DEMO_PHONE } from "./incident.js";
+import { placeIncidentCall, DEMO_PHONE, INCIDENT_GREETING, incidentPrompt } from "./incident.js";
 import { SMS_SYSTEM_PROMPT, GREETING } from "./voice-prompts.js";
 import { voiceConfig, xmlEscape, relayTwiml, mediaTwiml, fallbackUrl } from "./voice-config.js";
 import { CallSession, SessionStore, voiceLog } from "./voice-session.js";
+import { RelayTransport, MediaTransport, warmGreeting, greetingIsReady } from "./voice-transports.js";
 import { writeAndSendPostmortem, needsPostmortem } from "./postmortem.js";
-import { RelayTransport, MediaTransport } from "./voice-transports.js";
 import { providerFetch } from "./voice-http.js";
+import { demoJobs } from './demo-jobs.js';
+import { requestedTool } from './demo-intent.js';
+import { DemoReset } from './demo-reset.js';
 
 const providers = [linode, actions];
 const tools = providers.flatMap((p) => p.tools);
-const dispatchTool = (name, args) => {
+const dispatchTool = (name, args, context) => {
   const owner = providers.find((p) => p.tools.some((t) => t.function.name === name));
-  return owner ? owner.runTool(name, args) : Promise.resolve(`Unknown tool: ${name}`);
+  return owner ? owner.runTool(name, args, context) : Promise.resolve(`Unknown tool: ${name}`);
 };
 
 export function validateTwilio(req, config, upgrade = false) {
@@ -40,11 +43,13 @@ export function validateTwilio(req, config, upgrade = false) {
   return candidates.some((candidate) => twilio.validateRequest(config.twilioToken, signature, candidate, params));
 }
 
-export function createVoiceServer({ config = voiceConfig(), client = new OpenAI({ fetch: providerFetch }), dispatch = dispatchTool, twilioClient, Media = MediaTransport, log = voiceLog } = {}) {
+export function createVoiceServer({ config = voiceConfig(), client = new OpenAI({ fetch: providerFetch }), dispatch = dispatchTool, twilioClient, Media = MediaTransport, log = voiceLog, incidentCaller = placeIncidentCall, jobs = demoJobs } = {}) {
+  let reset;
   const model = process.env.CHAT_MODEL || "hackathon-chat";
   const tc = twilioClient || (config.twilioSid && config.twilioToken ? twilio(config.twilioSid, config.twilioToken, { timeout: 10000, autoRetry: false }) : null);
   const store = new SessionStore((data) => new CallSession({
-    ...data, dispatch, log,
+    ...data, dispatch: (name, args, context) => reset?.locked && !/^(get_|list_)/.test(name)
+      ? Promise.resolve('Demo reset is in progress; no remediation was started.') : dispatch(name, args, context), log,
     // If Ari changed anything on the call, write the postmortem and email the team.
     onClose: (s) => {
       if (!needsPostmortem(s.actionLog)) return;
@@ -53,14 +58,33 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
         .catch((e) => console.error(`[${s.callSid}] postmortem failed:`, e.message));
     },
     complete: async (messages, signal) => {
-      const response = await client.chat.completions.create({ model, max_tokens: 1024, tools, tool_choice: "auto", messages }, { signal, timeout: 30000, maxRetries: 0 });
+      const requested = requestedTool(messages);
+      const toolChoice = requested ? { type: 'function', function: { name: requested } } : 'auto';
+      const response = await client.chat.completions.create({ model, max_tokens: 1024, tools, tool_choice: toolChoice, messages }, { signal, timeout: 30000, maxRetries: 0 });
       return response.choices[0].message;
     },
   }));
   const app = express();
+  reset = new DemoReset({ jobs, checkBusy: () => [...store.sessions.values()].some(s => s.alive && s.bound) });
   const greetingCache = new Map();
+  app.get('/health/voice', (_req, res) => res.json({ stack: config.stack, incidentGreetingReady: config.stack !== 'custom' || greetingIsReady(config, INCIDENT_GREETING, greetingCache) }));
   app.use(express.urlencoded({ extended: false }));
+  app.use(express.json({ limit: '32kb' }));
   app.use(express.static(fileURLToPath(new URL("./public", import.meta.url))));
+  app.all('/demo/reset-run', async (req, res) => {
+    // A tunnel originates from loopback too: also require a local Host/Origin.
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+      || !['localhost', '127.0.0.1', '[::1]'].includes(req.hostname)) return res.sendStatus(403);
+    if (req.headers.origin) {
+      try { if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(req.headers.origin).hostname)) return res.sendStatus(403); }
+      catch { return res.sendStatus(403); }
+    }
+    try {
+      if (req.method === 'GET') return res.json(reset.state);
+      if (req.method === 'POST') return res.status(202).json(reset.start());
+      res.sendStatus(405);
+    } catch(e) { res.status(e.status || 500).json({ error:e.message }); }
+  });
   const fromTwilio = (req) => validateTwilio(req, config);
 
   const endCall = async (session) => {
@@ -105,8 +129,10 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
     if (!req.body.CallSid) return res.sendStatus(400);
     const session = store.create({
       callSid: req.body.CallSid,
-      greeting: typeof req.query.greeting === "string" ? req.query.greeting : GREETING,
-      prompt: typeof req.query.prompt === "string" ? req.query.prompt : "",
+      greeting: typeof req.query.greeting === "string" ? req.query.greeting : req.query.incidentId ? INCIDENT_GREETING : GREETING,
+      prompt: typeof req.query.prompt === "string" ? req.query.prompt : req.query.incidentId ? incidentPrompt({ label: req.query.label || 'load-balancer-01' }) : '',
+      incidentId: typeof req.query.incidentId === 'string' ? req.query.incidentId : undefined,
+      recipient: req.query.incidentId ? jobs.jobs[`call:${req.query.incidentId}`]?.recipient : req.body.From,
     }, config.stack === "custom");
     if (!session.alive) return res.sendStatus(410);
     const cfg = { ...config, host: config.host || req.headers.host };
@@ -147,8 +173,21 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
   app.post("/incident", async (req, res) => {
     const ip = req.socket.remoteAddress || "";
     if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(ip)) return res.sendStatus(403);
+    if (reset.locked) return res.status(409).json({ error:'Demo reset is in progress' });
     try {
-      const call = await placeIncidentCall({ to: req.body?.to || DEMO_PHONE, label: req.body?.label || "ari-net-lb-1" });
+      if (!req.body?.id || !Array.isArray(req.body.attackerIps) || req.body.attackerIps.length < 2) return res.status(400).json({ error: 'observed incident id and attackers required' });
+      const key = `call:${req.body.id}`;
+      const existing = jobs.jobs[key];
+      if (existing) return res.status(existing.status === 'done' ? 200 : 409).json({ ok: existing.status === 'done', callSid: existing.result?.sid, error: 'incident call already dispatched' });
+      const recipient = req.body?.to || DEMO_PHONE;
+      jobs.jobs[key] = { id: key, status: 'running', recipient, startedAt: Date.now() }; jobs.save();
+      let call;
+      try {
+        call = await incidentCaller({ to: recipient, label: req.body?.label || 'load-balancer-01', incidentId: req.body.id });
+        jobs.jobs[key] = { id: key, status: 'done', recipient, result: { sid: call.sid }, completedAt: Date.now() }; jobs.save();
+      } catch (error) {
+        jobs.jobs[key] = { id: key, status: 'uncertain', recipient, error: error.message }; jobs.save(); throw error;
+      }
       res.json({ ok: true, callSid: call.sid, to: call.to });
     } catch {
       res.status(502).json({ ok: false, error: "Could not place incident call" });
@@ -247,7 +286,7 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
     relayWss.close();
     mediaWss.close();
   }
-  return { app, server, store, fallback, close };
+  return { app, server, store, fallback, close, warmGreeting: () => config.stack === 'custom' ? warmGreeting(config, INCIDENT_GREETING, greetingCache) : Promise.resolve() };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -256,4 +295,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   runtime.server.listen(process.env.PORT || 8080, () => {
     console.log(`Ari listening on :${process.env.PORT || 8080}; voice stack: ${config.stack}`);
   });
+  runtime.warmGreeting().then(() => console.log('Incident opening audio is prepared.')).catch(e => console.error(`Incident audio preparation failed: ${e.message}`));
 }

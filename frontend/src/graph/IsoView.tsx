@@ -136,6 +136,7 @@ interface Body {
   bootStart: number
   bootPhase: string
   lastIssueCount: number
+  bornAt: number
 }
 
 interface LinkR {
@@ -150,6 +151,7 @@ interface LinkR {
   present: boolean
   goneAt: number
   nudge: number
+  bornAt: number
 }
 
 interface AgentR {
@@ -384,9 +386,12 @@ export default function IsoView(props: Props) {
       links.clear()
       return
     }
+    // Compute targets from this snapshot, not the previous scene. Otherwise a
+    // newly arriving node gets a different slot than it would on a fresh load.
+    const targets = new Map<string, { gx: number; gy: number }>()
     const occupied = (gx: number, gy: number, self: string) => {
-      for (const b of bodies.values()) {
-        if (b.id === self) continue
+      for (const [id, b] of targets) {
+        if (id === self) continue
         if (Math.max(Math.abs(b.gx - gx), Math.abs(b.gy - gy)) < GRID * 2.5) return true
       }
       return false
@@ -411,7 +416,8 @@ export default function IsoView(props: Props) {
     }
 
     const seen = new Set<string>()
-    const order = fleet.nodes.slice().sort((a, b) => Number(!!loadPos(b.label)) - Number(!!loadPos(a.label)))
+    const isPinned = (n: FleetNode) => !!loadPos(n.label) || !!bodies.get(n.id)?.pinned
+    const order = fleet.nodes.slice().sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)))
     for (const n of order) {
       let b = bodies.get(n.id)
       if (!b) {
@@ -425,15 +431,24 @@ export default function IsoView(props: Props) {
           if (old.pinned) savePos(n.label, old.gx, old.gy)
         }
       }
+      const p = b?.pinned ? { x: b.gx, y: b.gy, pin: true } : place(n)
+      targets.set(n.id, { gx: p.x, gy: p.y })
       if (!b) {
-        const p = place(n)
         b = {
           id: n.id, node: n, pending: n.id.startsWith('pending-'), x: p.x, y: p.y, gx: p.x, gy: p.y, ox: 0, oy: 0,
           pinned: p.pin, ta: 0, alpha: 0, ex: 0, bootStart: performance.now(), bootPhase: n.status,
           lastIssueCount: (n.issues ?? []).length,
+          bornAt: n.activation && Date.now() - n.activation.startedAt < 15000 ? performance.now() : performance.now() - 1000,
         }
         bodies.set(n.id, b)
+        if (n.activation && n.activation.status !== 'ready') {
+          const lb = [...bodies.values()].find(body => body.node.role === 'lb')
+          if (lb) { b.x = lb.x + GRID; b.y = lb.y + GRID }
+        }
       }
+      b.gx = p.x
+      b.gy = p.y
+      b.pinned = p.pin
       if (b.bootPhase !== n.status) {
         b.bootPhase = n.status
         b.bootStart = performance.now()
@@ -458,7 +473,7 @@ export default function IsoView(props: Props) {
       if (!a || !b || a === b) continue
       let lr = links.get(l.id)
       if (!lr || lr.a !== a || lr.b !== b) {
-        lr = { id: l.id, a, b, data: l, sF: 0, sR: 0, phF: 0, phR: 0, present: true, goneAt: 0, nudge: ((hash(l.id) % 5) - 2) * 7 }
+        lr = { id: l.id, a, b, data: l, sF: 0, sR: 0, phF: 0, phR: 0, present: true, goneAt: 0, nudge: ((hash(l.id) % 5) - 2) * 7, bornAt: performance.now() }
         links.set(l.id, lr)
       }
       lr.data = l
@@ -1010,6 +1025,7 @@ export default function IsoView(props: Props) {
       last = now
       const Pp = propsRef.current
       const red = Pp.reduced
+      const incidentImpact = Pp.metrics?.mode === 'surge' && !Pp.metrics?.stale
       const padT = Pp.insets?.top ?? TOP_PAD
       const padB = Pp.insets?.bottom ?? BOTTOM_PAD
       const padL = Pp.insets?.left ?? LEFT_PAD
@@ -1062,8 +1078,9 @@ export default function IsoView(props: Props) {
         dimAll = Math.max(dimAll, b.ex)
         const tree = b.ex > 0.001 ? treeOf(b) : null
         if (tree) nodeLay.set(b.id, { lay: levelLayout(b.id, tree.files, 1, tree), tree })
-        b.x += (b.gx - b.x) * ease(14)
-        b.y += (b.gy - b.y) * ease(14)
+        const entering = b.node.activation && now - b.bornAt < 1000
+        b.x += (b.gx - b.x) * ease(entering ? 4 : 14)
+        b.y += (b.gy - b.y) * ease(entering ? 4 : 14)
       }
       const nodeR = (b: Body) => {
         const st = shapeOf(b.node.role)
@@ -1377,11 +1394,11 @@ export default function IsoView(props: Props) {
         l.sF += (Math.max(0, l.data.bytesPerSec) - l.sF) * s
         l.sR += (Math.max(0, l.data.bytesPerSecReverse) - l.sR) * s
         if (!red) {
-          l.phF += laneSpeed(l.sF) * dt
-          l.phR += laneSpeed(l.sR) * dt
+          l.phF += laneSpeed(l.sF) * dt * (incidentImpact ? 3 : 1)
+          l.phR += laneSpeed(l.sR) * dt * (incidentImpact ? 3 : 1)
         }
         if (!l.present) continue
-        const col = PROTO_COLOR[l.data.protocol] ?? PROTO_COLOR.other
+        const col = incidentImpact ? C.red : PROTO_COLOR[l.data.protocol] ?? PROTO_COLOR.other
         const control = isControl(l.data.protocol)
         const isSel = sel?.kind === 'link' && sel.id === l.id
         const ctlLink = control && (l.a.node.role === 'controller' || l.b.node.role === 'controller')
@@ -1392,7 +1409,19 @@ export default function IsoView(props: Props) {
         nextVisible.add(l)
         const A = endPos(l.a, l, true)
         const B = endPos(l.b, l, false)
-        const pts = route(A, B, l.nudge)
+        const fullPath = route(A, B, l.nudge)
+        const linkGrowth = red ? 1 : clamp((now - l.bornAt) / 600, 0, 1)
+        const lengths = fullPath.slice(1).map((point, i) => Math.hypot(point.x - fullPath[i].x, point.y - fullPath[i].y))
+        let remaining = lengths.reduce((sum, length) => sum + length, 0) * linkGrowth
+        const pts = [fullPath[0]]
+        for (let i = 0; i < lengths.length; i++) {
+          if (remaining >= lengths[i]) { pts.push(fullPath[i + 1]); remaining -= lengths[i] }
+          else {
+            const fraction = lengths[i] ? remaining / lengths[i] : 0
+            pts.push({ x: fullPath[i].x + (fullPath[i + 1].x - fullPath[i].x) * fraction, y: fullPath[i].y + (fullPath[i + 1].y - fullPath[i].y) * fraction })
+            break
+          }
+        }
         nextRoutes.set(l, pts)
         const isHov = hoverLink === l
         const da = Math.min(dimOf(l.a), dimOf(l.b))
@@ -1464,7 +1493,7 @@ export default function IsoView(props: Props) {
       }
 
       // -- blocks + tiles, painter's order (back → front) --------------------------------
-      const surge = Pp.metrics?.mode === 'surge'
+      const surge = incidentImpact
       type Job = { depth: number; draw: () => void }
       const drawJobs: Job[] = []
       type LabelJob = { prio: number; kind: 'node' | 'item'; b: Body; v?: Vis; sx: number; sy: number; foot: { x: number; y: number; r: number }; a: number; level: Level | null; n: number }
@@ -1478,11 +1507,11 @@ export default function IsoView(props: Props) {
         const X = bx(b), Y = by(b)
         const level = issueLevel(n)
         const nIssues = (n.issues ?? []).length
-        const surgeTint = surge && (n.role === 'traffic' || n.role === 'internet')
+        const surgeTint = surge
         b.ta += ((level || surgeTint ? 1 : 0) - b.ta) * ease(6)
         const statusA = n.status === 'deleting' ? 0.25 : n.status === 'provisioning' || n.status === 'booting' ? 0.55 : n.status === 'offline' ? 0.7 : 1
         b.alpha += (statusA - b.alpha) * ease(4)
-        const tcol = level === 'amber' ? C.amber : C.red
+        const tcol = surge ? (n.role === 'app' ? C.red : C.amber) : level === 'amber' ? C.amber : C.red
         const dim = dimOf(b)
         const a = b.alpha * dim
         const e = b.ex
@@ -1516,13 +1545,17 @@ export default function IsoView(props: Props) {
               ctx.stroke()
             }
             const ringR = R + 12
-            if (n.status === 'provisioning' || n.status === 'booting') {
+            if (n.activation && (n.activation.status !== 'ready' || Date.now() - (n.activation.completedAt ?? 0) < 1000) || n.status === 'provisioning' || n.status === 'booting') {
               const t = (now - b.bootStart) / 1000
-              const prog = n.status === 'provisioning' ? 0.4 * (1 - Math.exp(-t / 3)) : 0.4 + 0.55 * (1 - Math.exp(-t / 5))
+              const prog = n.activation?.progress ?? (n.status === 'provisioning' ? 0.4 * (1 - Math.exp(-t / 3)) : 0.4 + 0.55 * (1 - Math.exp(-t / 5)))
               const g = groundEllipse(X, Y, 0, ringR)
               ctx.strokeStyle = 'rgba(40,56,84,0.15)'; ctx.lineWidth = 2.5
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, 0, Math.PI * 2); ctx.stroke()
-              ctx.strokeStyle = C.acc
+              const gradient = ctx.createConicGradient(-Math.PI / 2, g.cx, g.cy)
+              gradient.addColorStop(0, C.red)
+              gradient.addColorStop(0.5, C.amber)
+              gradient.addColorStop(1, '#36bb80')
+              ctx.strokeStyle = gradient
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prog); ctx.stroke()
             }
             const jobs = jobsByNode.get(b.id) ?? []
@@ -1543,7 +1576,16 @@ export default function IsoView(props: Props) {
         if (e < 0.995) {
           drawJobs.push({
             depth: X + Y,
-            draw: () => drawBlock(n, X, Y, 0, level || surgeTint ? tcol : null, b.ta * (level === 'red' ? 1.6 : 1), a * (1 - 0.88 * e), e * 26),
+            draw: () => {
+              const growth = red ? 1 : clamp((now - b.bornAt) / 500, 0, 1)
+              ctx.save()
+              const anchor = P(X, Y, 0)
+              ctx.translate(anchor.x, anchor.y)
+              ctx.scale(growth, growth)
+              ctx.translate(-anchor.x, -anchor.y)
+              drawBlock(n, X, Y, 0, level || surgeTint ? tcol : null, b.ta * (surge ? 3.5 : level === 'red' ? 1.6 : 1), a * (1 - 0.88 * e), e * 26)
+              ctx.restore()
+            },
           })
         }
 

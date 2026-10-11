@@ -6,17 +6,17 @@ import { voiceConfig, mediaTwiml, relayTwiml } from '../voice-config.js';
 import { TranscriptBuffer, DeepgramStream } from '../voice-deepgram.js';
 import { CallSession, SessionStore } from '../voice-session.js';
 import { audioFrames, speechSegments, convertAudio, kokoroPcm, sendPacedFrames } from '../voice-audio.js';
-import { MediaTransport, RelayTransport } from '../voice-transports.js';
+import { MediaTransport, RelayTransport, warmGreeting, greetingIsReady } from '../voice-transports.js';
 
 const config = {
   stack: 'custom', host: 'example.test', twilioSid: 'ACtest', twilioToken: 'test-token',
-  deepgramKey: 'fake-secret', model: 'nova-3', language: 'en-US', endpointing: 300, utteranceEnd: 1000,
+  sttUrl: 'wss://stt.test/v1/listen', deepgramKey: 'fake-secret', model: 'parakeet-tdt-0.6b-v2', language: 'en-US', endpointing: 300, utteranceEnd: 1000,
   kokoroUrl: 'https://kokoro.test', kokoroKey: 'fake-secret', voice: 'af_heart', speed: 1,
   ttsProvider: 'ElevenLabs', ttsVoice: 'Eric',
 };
 const session = (overrides = {}) => new CallSession({ callSid: 'CAtest', complete: async () => ({ role: 'assistant', content: 'Hello there.' }), dispatch: async () => 'done', log: () => {}, ...overrides });
 async function until(check) {
-  for (let i = 0; i < 200; i++) { if (check()) return; await sleep(5); }
+  for (let i = 0; i < 1000; i++) { if (check()) return; await sleep(5); }
   assert.fail('condition timed out');
 }
 function attach(s) {
@@ -32,12 +32,16 @@ test('configuration permits existing mode without custom keys, rejects incomplet
   assert.throws(() => voiceConfig({}, false), /PUBLIC_HOST/);
   assert.throws(() => voiceConfig({ ARI_VOICE_STACK: 'other' }, false));
   assert.throws(() => voiceConfig({ ARI_VOICE_STACK: 'custom' }, false), /PUBLIC_HOST/);
-  const env = { ARI_VOICE_STACK: 'custom', PUBLIC_HOST: 'example.test', TWILIO_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'token', DEEPGRAM_API: 'key', KOKORO_TTS_BASE_URL: 'https://kokoro.test', KOKORO_TTS_API_KEY: 'key' };
-  assert.equal(voiceConfig(env, false).model, 'nova-3');
+  const env = { ARI_VOICE_STACK: 'custom', PUBLIC_HOST: 'example.test', TWILIO_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'token', STT_URL: 'wss://stt.test/v1/listen', STT_API_KEY: 'key', KOKORO_TTS_BASE_URL: 'https://kokoro.test', KOKORO_TTS_API_KEY: 'key' };
+  assert.equal(voiceConfig(env, false).sttUrl, 'wss://stt.test/v1/listen');
   const { ARI_VOICE_STACK, ...defaultEnv } = env;
   assert.equal(voiceConfig(defaultEnv, false).stack, 'custom');
-  assert.throws(() => voiceConfig({ ...env, DEEPGRAM_MODEL: 'flux-general-en' }, false), /Flux/);
-  assert.throws(() => voiceConfig({ ...env, DEEPGRAM_UTTERANCE_END_MS: '300' }, false));
+  // Custom is the self-hosted STT + Kokoro; a Deepgram key alone no longer satisfies it.
+  const { STT_URL, STT_API_KEY, ...noStt } = env;
+  assert.throws(() => voiceConfig({ ...noStt, DEEPGRAM_API: 'key' }, false), /STT_URL/);
+  assert.throws(() => voiceConfig({ ...env, STT_URL: 'ws://stt.test/v1/listen' }, false), /WSS/);
+  assert.equal(voiceConfig({ ...env, STT_URL: 'ws://127.0.0.1:8001/v1/listen' }, false).stack, 'custom');
+  assert.throws(() => voiceConfig({ ...env, STT_ENDPOINTING_MS: '10' }, false));
 });
 test('TwiML escapes greeting, carries opaque session only, and fallback changes greeting', () => {
   const s = session({ greeting: 'Hello <friend> & "you"', prompt: 'private incident context' });
@@ -171,6 +175,41 @@ test('pacing starts at first audio, keeps lead bounded and observes cancellation
 });
 
 class FakeDeepgram extends EventEmitter { close() { this.closed = true; } audio(bytes) { this.bytes = bytes; } }
+test('answering noise cannot cancel opening audio; early speech waits for the greeting', async () => {
+  let release, completed = false, t;
+  const s = session({ greeting: 'Hello caller.', complete: async () => { completed = true; return { role: 'assistant', content: '' }; } });
+  const sent = [];
+  const ws = { readyState: 1, send(raw) { const msg = JSON.parse(raw); sent.push(msg); if (msg.event === 'mark') queueMicrotask(() => t.receive(msg)); }, close() {} };
+  t = new MediaTransport(s, ws, 'MZtest', config, { Deepgram: FakeDeepgram,
+    fetcher: () => new Promise(resolve => { release = () => resolve(new Response(Buffer.alloc(4800), { headers: { 'x-audio-format': 'pcm_s16le', 'x-sample-rate': '24000' } })); }),
+    fallback: async () => assert.fail('opening failed'), end: async () => {}, release() {} });
+  s.attach(t); t.dg.emit('ready'); await until(() => release);
+  t.dg.emit('speechStarted'); t.dg.emit('utterance', 'Hello Ari', 1);
+  assert.equal(t.playback.signal.aborted, false);
+  assert.equal(completed, false);
+  assert.equal(sent.some(m => m.event === 'clear'), false);
+  release(); await until(() => completed);
+  assert.ok(sent.some(m => m.event === 'media'));
+  assert.equal(s.messages[0].content, 'Hello caller.');
+  assert.equal(s.messages[1].content, 'Hello Ari');
+  t.dispose();
+});
+test('an early caller utterance proceeds even while the cancelled greeting is pending', async () => {
+  let completed = false;
+  const s = session({ complete: async () => { completed = true; return { role: 'assistant', content: '' }; } });
+  const t = new MediaTransport(s, { readyState: 1, send() {}, close() {} }, 'MZtest', config,
+    { Deepgram: FakeDeepgram, fallback: async () => {}, end: async () => {}, release() {} });
+  s.attach(t);
+  t.greetingActive = false;
+  const greeting = new AbortController();
+  t.playback = greeting;
+  t.dg.emit('utterance', 'Hello Ari', 1);
+  await until(() => completed);
+  assert.equal(greeting.signal.aborted, true);
+  assert.equal(t.ready, true);
+  assert.equal(s.messages[0].content, 'Hello Ari');
+  t.dispose();
+});
 test('cleared marks never enter history; late acknowledgements are ignored', async () => {
   const s = session(); const sent = [];
   const ws = { readyState: 1, bufferedAmount: 0, send(raw) { sent.push(JSON.parse(raw)); }, close() {} };
@@ -215,6 +254,19 @@ test('Deepgram bridges buffered audio after handshake and closes its timers', ()
   assert.equal(d.ws.options.headers.Authorization, 'Token fake-secret');
   d.close(); assert.equal(d.closed, true); assert.equal(faults.length, 0);
 });
+test('voice activity alone does not confirm speech; duplicate finalized text cannot interrupt twice', () => {
+  const d = new DeepgramStream(config, { Socket: FakeSocket }); let confirmed = 0;
+  d.on('speechConfirmed', () => confirmed++);
+  d.ws.emit('message', JSON.stringify({ type: 'SpeechStarted' }));
+  assert.equal(confirmed, 0);
+  const result = { type: 'Results', is_final: true, speech_final: true, start: 0, duration: 1, channel: { alternatives: [{ transcript: 'Hello', words: [{ end: 1 }] }] } };
+  d.ws.emit('message', JSON.stringify(result));
+  d.ws.emit('message', JSON.stringify(result));
+  assert.equal(confirmed, 1);
+  d.ws.emit('message', JSON.stringify({ type: 'SpeechStarted' }));
+  d.ws.emit('message', JSON.stringify({ ...result, start: 2 }));
+  assert.equal(confirmed, 2); d.close();
+});
 test('Deepgram startup audio is bounded and malformed provider messages fail visibly', () => {
   const d = new DeepgramStream(config, { Socket: FakeSocket }); let failures = 0;
   d.on('fault', () => failures++);
@@ -231,13 +283,13 @@ test('Kokoro first-audio timeout aborts the underlying request', async () => {
   await assert.rejects(async () => { for await (const bytes of kokoroPcm(config, 'hello', new AbortController().signal, fetcher)) void bytes; }, /timeout/);
   assert.equal(httpSignal.aborted, true);
 });
-test('Deepgram speech-start cancels real paced conversion and prevents stale output/history', async () => {
+test('Deepgram confirmed speech cancels real paced conversion and prevents stale output/history', async () => {
   const s = session(); const sent = []; let t; let interruptionScheduled = false;
   const ws = { readyState: 1, bufferedAmount: 0, send(raw) {
     const msg = JSON.parse(raw); sent.push(msg);
     if (msg.event === 'media' && !interruptionScheduled) {
       interruptionScheduled = true;
-      setTimeout(() => t.dg.emit('speechStarted'), 15);
+      setTimeout(() => t.dg.emit('speechConfirmed'), 15);
     }
   }, close() {} };
   const fetcher = async () => new Response(Buffer.alloc(96000), { headers: { 'x-audio-format': 'pcm_s16le', 'x-sample-rate': '24000' } });
@@ -270,6 +322,20 @@ test('standard greeting is reused across calls without another synthesis request
     assert.equal(s.messages.at(-1).content, s.greeting); t.dispose();
   }
   assert.equal(fetches, 1);
+});
+test('a prepared incident opening plays without live synthesis and readiness is tied to its text', async () => {
+  const cache = new Map(); let requests = 0, t;
+  const fetcher = async () => { requests++; return new Response(Buffer.alloc(4800), { headers: { 'x-audio-format': 'pcm_s16le', 'x-sample-rate': '24000' } }); };
+  const text = 'Hello, incident detected.';
+  await warmGreeting(config, text, cache, fetcher);
+  assert.equal(greetingIsReady(config, text, cache), true);
+  assert.equal(greetingIsReady(config, 'Different opening.', cache), false);
+  const s = session({ greeting: text });
+  const ws = { readyState: 1, send(raw) { const message = JSON.parse(raw); if (message.event === 'mark') queueMicrotask(() => t.receive(message)); }, close() {} };
+  t = new MediaTransport(s, ws, 'MZtest', config, { Deepgram: FakeDeepgram, greetingCache: cache,
+    fetcher: async () => assert.fail('prepared opening must not synthesize on the call'), fallback: async () => assert.fail('prepared opening failed'), end: async () => {}, release() {} });
+  s.attach(t); t.dg.emit('ready'); await until(() => t.ready);
+  assert.equal(requests, 1); assert.equal(s.messages[0].content, text); t.dispose();
 });
 
 test('non-object tool arguments are rejected without dispatch', async () => {

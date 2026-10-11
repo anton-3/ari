@@ -1,8 +1,25 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { DeepgramStream } from "./voice-deepgram.js";
 import { speechSegments, kokoroPcm, convertAudio, sendPacedFrames } from "./voice-audio.js";
-import { GREETING } from "./voice-prompts.js";
 import { providerFetch } from "./voice-http.js";
+
+const speechCacheKey = (config, segment) => `${config.kokoroUrl}:${config.voice}:${config.speed}:${segment}`;
+export function greetingIsReady(config, text, cache) {
+  return speechSegments(text).every(segment => cache.has(speechCacheKey(config, segment)));
+}
+export async function warmGreeting(config, text, cache, fetcher = providerFetch) {
+  for (const segment of speechSegments(text)) {
+    const key = speechCacheKey(config, segment);
+    if (cache.has(key)) continue;
+    const controller = new AbortController();
+    try {
+      const frames = [];
+      for await (const frame of convertAudio(kokoroPcm(config, segment, controller.signal, fetcher), controller.signal)) frames.push(Buffer.from(frame));
+      if (!frames.length) throw new Error('Empty greeting audio');
+      cache.set(key, frames);
+    } finally { controller.abort(); }
+  }
+}
 
 export class RelayTransport {
   constructor(session, ws, config) {
@@ -41,16 +58,23 @@ export class MediaTransport {
     Object.assign(this, { session, ws, streamSid, config, fallback, endCall: end, release, fetcher, greetingCache });
     this.stack = "custom";
     this.ready = false;
+    this.greetingActive = true;
     this.interruptible = true;
     this.marks = new Map();
     this.markCounter = 0;
     this.dg = new Deepgram(config);
     this.dg.on("fault", (error) => this.fail(error));
     this.dg.on("utterance", (text, wordEnd) => {
+      // A caller can answer before greeting synthesis/playback finishes. Do not
+      // leave their turn gated on a cancelled greeting's audio pipeline.
+      if (!this.ready && !this.greetingActive) {
+        this.clear();
+        this.ready = true;
+      }
       session.log(session, "utterance_final", { at: Date.now(), speechToFinalMs: this.audioEpoch !== undefined && wordEnd !== undefined ? Math.max(0, performance.now() - this.audioEpoch - wordEnd * 1000) : undefined });
       session.enqueue(text);
     });
-    this.dg.on("speechStarted", () => {
+    this.dg.on("speechConfirmed", () => {
       if (this.interruptible && (this.playback || session.current)) {
         const started = performance.now();
         session.interrupt();
@@ -62,10 +86,15 @@ export class MediaTransport {
   }
 
   async greet() {
+    this.session.log(this.session, 'greeting_started');
     try {
-      if (!this.session.queue.length) await this.output(this.session.greeting, null, true, null, this.session.greeting === GREETING);
+      // Answering noise/VAD must not erase the only opening message. Queue
+      // speech during this short opening and handle it after playback finishes.
+      await this.output(this.session.greeting, null, false, null, true);
       if (this.closed) return;
+      this.greetingActive = false;
       this.ready = true;
+      this.session.log(this.session, 'greeting_complete');
       void this.session.drain();
     } catch (error) { this.fail(error); }
   }
@@ -128,7 +157,7 @@ export class MediaTransport {
       for (const segment of file ? [""] : speechSegments(text)) {
         controller.signal.throwIfAborted();
         this.playbackSegment = segment;
-        const cacheKey = `${this.config.kokoroUrl}:${this.config.voice}:${this.config.speed}`;
+        const cacheKey = speechCacheKey(this.config, segment);
         const cached = cacheGreeting && this.greetingCache.get(cacheKey);
         const generated = [];
         const pcm = file ? null : kokoroPcm(this.config, segment, controller.signal, this.fetcher);

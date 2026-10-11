@@ -2,7 +2,8 @@
 
 Twilio mu-law 8 kHz audio -> Silero VAD (endpointing + barge-in) -> NVIDIA Parakeet-TDT 0.6B v2
 (int8 ONNX via sherpa-onnx). Emits the Deepgram messages Ari's backend consumes:
-SpeechStarted, Results (is_final + speech_final per utterance), UtteranceEnd, Metadata.
+SpeechStarted, one interim Results once words are recognised (the backend's barge-in signal),
+Results (is_final + speech_final per utterance), UtteranceEnd, Metadata.
 
 Env: STT_API_KEY (required), STT_MODEL_DIR, STT_VAD_MODEL, STT_HOST, STT_PORT, STT_THREADS.
 """
@@ -104,6 +105,10 @@ UNFINISHED_HOLD_S = 0.6     # "..., and" / "the" / trailing comma: give the call
 ENERGY_POSTPONE_S = 0.2
 MAX_POSTPONE_S = 0.8
 MAX_TURN = 30 * RATE
+# The backend only interrupts Ari on a transcript, not on SpeechStarted (noise trips VAD). Decode the first
+# moments of each burst and send one interim result as soon as it contains words.
+INTERIM_AFTER = int(0.4 * RATE)
+INTERIM_WINDOW = 3 * RATE
 TRAILING = {"and", "but", "or", "so", "then", "to", "the", "a", "an", "of", "with", "because", "if", "um", "uh", "like"}
 
 
@@ -126,6 +131,10 @@ async def session(ws):
     emit = None  # pending speculative decode + hold for the current turn
     deadline = cap = 0.0
     floor = 0.003  # running background-noise RMS estimate
+    burst_start = 0  # absolute sample where the current speech burst began
+    confirmed = False
+    next_interim = 0
+    interim = None
 
     async def send(msg):
         try:
@@ -159,6 +168,19 @@ async def session(ws):
             "metadata": {"request_id": request_id, "model_info": {"name": MODEL_NAME}},
         })
         await send({"type": "UtteranceEnd", "channel": [0, 1], "last_word_end": end / RATE})
+
+    async def confirm(start, end, audio):
+        nonlocal confirmed
+        text = await loop.run_in_executor(decoder_pool, transcribe, audio)
+        if not text or confirmed:
+            return
+        confirmed = True
+        await send({
+            "type": "Results", "channel_index": [0, 1], "start": start / RATE, "duration": (end - start) / RATE,
+            "is_final": False, "speech_final": False,
+            "channel": {"alternatives": [{"transcript": text, "confidence": 1.0, "words": []}]},
+            "metadata": {"request_id": request_id, "model_info": {"name": MODEL_NAME}},
+        })
 
     def drain(closing=False):
         nonlocal turn_start, turn_end, emit, deadline, cap
@@ -202,7 +224,13 @@ async def session(ws):
                     if emit and not emit.done() and turn_start is not None:
                         emit.cancel()  # caller kept talking: this turn continues
                     await send({"type": "SpeechStarted", "channel": [0], "timestamp": received / RATE})
+                    burst_start = max(buf_start, received - len(samples) - PREROLL)
+                    confirmed, next_interim = False, received + INTERIM_AFTER
                 speaking = now
+                if speaking and not confirmed and received >= next_interim and (not interim or interim.done()):
+                    next_interim = received + INTERIM_AFTER
+                    start = max(burst_start, buf_start, received - INTERIM_WINDOW)
+                    interim = asyncio.create_task(confirm(start, received, buf[start - buf_start:].copy()))
                 # A segment finished, or speech stopped without one (noise burst): (re)close the turn.
                 if not vad.empty() or (was and not now and turn_start is not None and (not emit or emit.done())):
                     drain()
@@ -217,6 +245,8 @@ async def session(ws):
                     if kind == "CloseStream":
                         break
     finally:
+        if interim and not interim.done():
+            interim.cancel()
         if emit and not emit.done():
             try:
                 await emit

@@ -105,9 +105,9 @@ export const ADMIN_KEYS = [
   'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEPYBAmDJCioejq2EcsaQp1MDZY/ZUcUBzDwce+ykmQy angelettianton@gmail.com',
 ];
 
-export async function createInstance({ role, label, pubkey }) {
+export async function createInstance({ role, label, pubkey, standby = false }) {
   const type = typeForRole(role);
-  if (!/^ari-net-[a-z]+-\d+$/.test(label)) throw new Error('bad label');
+  if (!/^ari-net-[a-z]+-\d+$/.test(label) && !(standby && role === 'app' && label === 'web-03')) throw new Error('bad label');
   return api('/linode/instances', 'POST', {
     label,
     region: REGION,
@@ -118,7 +118,7 @@ export async function createInstance({ role, label, pubkey }) {
     authorized_keys: [pubkey, ...ADMIN_KEYS.filter((k) => k !== pubkey)],
     private_ip: true,
     booted: true,
-    tags: [FLEET_TAG, `role:${role}`],
+    tags: [FLEET_TAG, `role:${role}`, ...(standby ? ['ari-standby'] : [])],
   });
 }
 

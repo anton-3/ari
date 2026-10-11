@@ -7,9 +7,17 @@ export interface SeriesPoint {
   errorRate: number
   latencyMs: number
   activeUsers: number
+  requestsPerMinute?: number | null
 }
 
 export interface Metrics {
+  requestsLast180s?: number | null
+  requestsPerMinute?: number | null
+  observedAt?: number | null
+  stale?: boolean
+  source?: string
+  windowSeconds?: number
+  rateWindowSeconds?: number
   ts: number
   mode: string
   rps: number
@@ -87,6 +95,7 @@ export interface VulnsResponse {
 export type WsMessage =
   | { type: 'metrics'; data: Metrics }
   | { type: 'log'; data: LogEntry }
+  | { type: 'logs'; data: LogsResponse }
   | { type: 'agents'; data: AgentsResponse }
   | { type: 'reasoning'; data: ReasoningLine }
 

@@ -27,8 +27,6 @@ import type {
 } from '../../graph/types'
 import type { Metrics } from '../types'
 
-// The simulator only takes over once the real feed has had this long to answer.
-const SIM_GRACE_MS = 4000
 const INSETS = { top: 20, right: 20, bottom: 20, left: 20 }
 // Room the camera leaves for the detail popup while something is selected.
 const DETAIL_INSET = 272
@@ -61,33 +59,7 @@ interface MapProps {
 export function InfrastructureMap({ metrics, agents }: MapProps) {
   const surge = metrics?.mode === 'surge'
   const real = useFleet(false, surge)
-  const hasReal = (real.fleet?.nodes.length ?? 0) > 0
-  const [waited, setWaited] = useState(false)
-
-  useEffect(() => {
-    if (hasReal) return
-    const timer = window.setTimeout(() => setWaited(true), SIM_GRACE_MS)
-    return () => window.clearTimeout(timer)
-  }, [hasReal])
-
-  if (hasReal)
-    return (
-      <FleetCard fl={real} agents={agents} metrics={metrics} simulated={false} />
-    )
-  if (waited) return <SimulatedFleet metrics={metrics} surge={surge} />
-  return <FleetCard fl={null} agents={[]} metrics={metrics} simulated={false} />
-}
-
-// Mounted only while there is no real fleet; the real feed keeps probing above.
-function SimulatedFleet({
-  metrics,
-  surge,
-}: {
-  metrics: Metrics | null
-  surge: boolean
-}) {
-  const fl = useFleet(true, surge)
-  return <FleetCard fl={fl} agents={fl.simAgents} metrics={metrics} simulated />
+  return <FleetCard fl={real} agents={agents} metrics={metrics} simulated={false} />
 }
 
 function FleetCard({

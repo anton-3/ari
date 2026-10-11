@@ -9,8 +9,9 @@ export function voiceLog(session, event, fields = {}) {
 }
 
 export class CallSession {
-  constructor({ callSid, greeting = GREETING, prompt = "", complete, dispatch, log = voiceLog, onClose }) {
+  constructor({ callSid, greeting = GREETING, prompt = "", complete, dispatch, log = voiceLog, incidentId, recipient, onClose }) {
     Object.assign(this, { callSid, greeting, complete, dispatch, log, onClose });
+    this.context = { callSid, incidentId, recipient };
     this.startedAt = new Date();
     this.actionLog = []; // every tool Ari ran this call, for the postmortem
     this.token = randomBytes(32).toString("base64url");
@@ -80,7 +81,7 @@ export class CallSession {
         if (text) {
           // A new caller request may legitimately ask to repeat an action. A
           // transport fallback, however, must retain the prior operation ledger.
-          this.operations.clear();
+          if (!this.context.incidentId) this.operations.clear();
           const last = this.messages.at(-1);
           if (last?.role === "user") last.content += ` ${text}`;
           else this.messages.push({ role: "user", content: text });
@@ -134,7 +135,7 @@ export class CallSession {
               }
               const started = performance.now();
               // A dispatched operation is never retried or discarded on interruption.
-              try { result = await this.dispatch(call.function.name, args); }
+              try { result = await this.dispatch(call.function.name, args, this.context); }
               catch { result = "Tool failed; outcome may be uncertain. Do not retry automatically. Verify current state first."; }
               this.actionLog.push({ at: new Date().toISOString(), name: call.function.name, args, result: typeof result === "string" ? result : JSON.stringify(result) });
               if (!READ_ONLY_TOOLS.has(call.function.name)) this.operations.set(key, typeof result === "string" ? result : JSON.stringify(result));

@@ -159,6 +159,22 @@ def worker(idx):
 
 
 if __name__ == "__main__":
+    if os.environ.get('DEMO_PROFILE') == '1':
+        # One actual request per second, five recurring demo clients. No fake counts.
+        index = 0
+        while True:
+            started = time.monotonic()
+            conn = http.client.HTTPConnection(LB, 80, timeout=2)
+            try:
+                path = ['/api/users/1', '/api/users/2', '/health', '/api/merchants', '/api/users/3'][index % 5]
+                conn.request('GET', path, headers={'X-Forwarded-For': '198.51.100.' + str(20 + index % 5), 'User-Agent': 'ari-demo-baseline/2.0'})
+                conn.getresponse().read()
+            except (OSError, http.client.HTTPException):
+                pass
+            finally:
+                conn.close()
+            index += 1
+            time.sleep(max(0, 1 - (time.monotonic() - started)))
     threading.Thread(target=read_mode, daemon=True).start()
     for i in range(PLAN["surge"][0]):
         threading.Thread(target=worker, args=(i,), daemon=True).start()

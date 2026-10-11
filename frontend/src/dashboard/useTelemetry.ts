@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react'
 import { API, POLL_INTERVAL_MS, WS_URL } from './config'
-import {
-  advanceMetrics,
-  makeLog,
-  makeLogSeed,
-  makeMetricsSeed,
-  makeTopology,
-  makeVulnSeed,
-} from './mockData'
 import type {
   Agent,
   AgentEvent,
@@ -101,7 +93,6 @@ export function useTelemetry(): TelemetryState {
     let lastFrame = 0
     let socketStartedAt = 0
     let nextSocketAttempt = 0
-    let demo: Metrics | null = null
     const controllers = new Set<AbortController>()
 
     async function request<T>(url: string): Promise<T | null> {
@@ -152,10 +143,14 @@ export function useTelemetry(): TelemetryState {
             }))
             return
           }
+          if (message.type === 'logs') {
+            const incoming = message.data.logs.map(normalizeLog).reverse()
+            setState(previous => ({ ...previous, logs: [...incoming, ...previous.logs].slice(0, MAX_LOGS) }))
+            return
+          }
           if (message.type !== 'metrics' && message.type !== 'log') return
           lastFrame = Date.now()
           receivedServiceData = true
-          demo = null
           setState((previous) =>
             message.type === 'metrics'
               ? {
@@ -197,9 +192,8 @@ export function useTelemetry(): TelemetryState {
         ])
         if (cancelled) return
         if (metrics) {
-          const wasDemo = demo !== null
+          const wasDemo = false
           receivedServiceData = true
-          demo = null
           setState((previous) => ({
             metrics: normalizeMetrics(metrics),
             logs: logs
@@ -239,25 +233,8 @@ export function useTelemetry(): TelemetryState {
           if (receivedServiceData) {
             // Keep the last service snapshot rather than replace it with fake activity.
             setState((previous) => ({ ...previous, source: 'offline' }))
-          } else if (!demo) {
-            demo = makeMetricsSeed()
-            setState({
-              metrics: demo,
-              logs: makeLogSeed().reverse(),
-              topology: makeTopology(),
-              vulns: makeVulnSeed(),
-              agents: [],
-              activity: [],
-              source: 'mock',
-            })
           } else {
-            demo = advanceMetrics(demo)
-            setState((previous) => ({
-              ...previous,
-              metrics: demo,
-              logs: [makeLog(), ...previous.logs].slice(0, MAX_LOGS),
-              source: 'mock',
-            }))
+            setState(previous => ({ ...previous, source: 'offline' }))
           }
         }
       } finally {

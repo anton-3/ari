@@ -7,9 +7,17 @@ export interface SeriesPoint {
   errorRate: number
   latencyMs: number
   activeUsers: number
+  requestsPerMinute?: number | null
 }
 
 export interface Metrics {
+  requestsLast180s?: number | null
+  requestsPerMinute?: number | null
+  observedAt?: number | null
+  stale?: boolean
+  source?: string
+  windowSeconds?: number
+  rateWindowSeconds?: number
   ts: number
   mode: string
   rps: number
@@ -217,6 +225,10 @@ export interface FleetIssue {
 // synthetic controller/internet nodes have no IPs). useFleet.publish() is the
 // single normalization boundary; everything downstream sees these shapes.
 export interface FleetNode {
+  servingState?: 'standby' | 'activating' | 'serving' | 'failed'
+  inUpstream?: boolean
+  activation?: { id: string; status: string; progress: number; startedAt: number; completedAt?: number; error?: string }
+
   id: string
   label: string
   role: FleetRole
@@ -235,6 +247,8 @@ export interface FleetNode {
 }
 
 export interface FleetLink {
+  configured?: boolean
+
   id: string
   source: string
   target: string
