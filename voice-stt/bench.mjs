@@ -7,7 +7,10 @@ import { spawnSync } from "node:child_process";
 import { DeepgramStream } from "../backend/voice-deepgram.js";
 
 const [sttUrl = "ws://localhost:8001/v1/listen", sttKey = process.env.STT_API_KEY] = process.argv.slice(2);
-const PHRASES = [
+// BENCH_PHRASES=file.json ([[voice, text], ...]) swaps the phrase set; BENCH_PROVIDERS=self-hosted skips Deepgram.
+import { readFileSync } from "node:fs";
+const PROVIDERS = (process.env.BENCH_PROVIDERS || "deepgram,self-hosted").split(",");
+const DEFAULT_PHRASES = [
   ["af_heart", "Yes, go ahead and block those IP addresses."],
   ["am_michael", "Can you spin up another node to serve the web app?"],
   ["af_heart", "Implement rate limiting in the reverse proxy, put it on a new branch, and text me the pull request."],
@@ -17,6 +20,8 @@ const PHRASES = [
   ["af_bella", "Roll back the last commit on the payments service and rotate the Stripe secret key."],
   ["am_adam", "How many requests per second are we seeing from those five addresses?"],
 ];
+
+const PHRASES = process.env.BENCH_PHRASES ? JSON.parse(readFileSync(process.env.BENCH_PHRASES, "utf8")) : DEFAULT_PHRASES;
 
 async function speech(voice, text) {
   const res = await fetch(`${process.env.KOKORO_TTS_BASE_URL}/v1/audio/speech/stream`, {
@@ -84,13 +89,13 @@ function run(provider, audio) {
 const rows = [];
 for (const [voice, ref] of PHRASES) {
   const audio = await speech(voice, ref);
-  for (const provider of ["deepgram", "self-hosted"]) {
+  for (const provider of PROVIDERS) {
     const r = await run(provider, audio);
     rows.push({ provider, voice, wer: wer(ref, r.text), ms: r.ms, turns: r.turns, text: r.text, error: r.error });
     console.log(`${provider.padEnd(11)} ${voice.padEnd(10)} WER ${(wer(ref, r.text) * 100).toFixed(0).padStart(3)}%  ${r.ms ? Math.round(r.ms) + "ms" : r.error || "no transcript"}${r.turns > 1 ? ` (split x${r.turns})` : ""}  "${r.text}"`);
   }
 }
-for (const provider of ["deepgram", "self-hosted"]) {
+for (const provider of PROVIDERS) {
   const rs = rows.filter((r) => r.provider === provider);
   const ms = rs.filter((r) => r.ms).map((r) => r.ms).sort((a, b) => a - b);
   console.log(`\n${provider}: mean WER ${(rs.reduce((a, r) => a + r.wer, 0) / rs.length * 100).toFixed(1)}%, end-of-speech -> final: median ${Math.round(ms[ms.length >> 1])}ms, max ${Math.round(ms.at(-1))}ms, failures ${rs.length - ms.length}, split turns ${rs.filter((r) => r.turns > 1).length}`);

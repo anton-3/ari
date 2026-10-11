@@ -253,9 +253,13 @@ const QUOTES = {
   SOL:  { name: 'Solana',                close: 16740 },
   ADA:  { name: 'Cardano',               close: 38 },
   DOGE: { name: 'Dogecoin',              close: 12 },
+  XRP:  { name: 'XRP',                   close: 240 },
+  LTC:  { name: 'Litecoin',              close: 9500 },
+  AVAX: { name: 'Avalanche',             close: 2800 },
+  LINK: { name: 'Chainlink',             close: 1600 },
 };
 // The crypto universe (also the symbols we fetch live from CoinGecko).
-const CRYPTO_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'ADA', 'DOGE']);
+const CRYPTO_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'ADA', 'DOGE', 'XRP', 'LTC', 'AVAX', 'LINK']);
 // Live price state, seeded at previous close, random-walked on each read.
 const livePrice = {};
 for (const [sym, q] of Object.entries(QUOTES)) livePrice[sym] = q.close;
@@ -285,8 +289,8 @@ function quote(symbol) {
 // users produce ~1 upstream call per interval (not one per request). On any
 // failure/timeout we fall back to the in-code random-walk quote table so the
 // page never breaks; the response carries source:'live'|'fallback'.
-const CG_IDS = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', cardano: 'ADA', dogecoin: 'DOGE' };
-const CG_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true';
+const CG_IDS = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', cardano: 'ADA', dogecoin: 'DOGE', ripple: 'XRP', litecoin: 'LTC', 'avalanche-2': 'AVAX', chainlink: 'LINK' };
+const CG_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,dogecoin,ripple,litecoin,avalanche-2,chainlink&vs_currencies=usd&include_24hr_change=true';
 const CRYPTO_TTL_MS = 20000;
 const CRYPTO_TIMEOUT_MS = 2500;
 let cryptoCache = { at: 0, source: 'fallback', prices: null };
@@ -596,6 +600,35 @@ app.post('/api/trade', requireAuth, async (req, res, next) => {
       ok: true,
       fill: { symbol, side, quantity, price_cents, cash_cents_after: num(after.balance_cents) },
     });
+  } catch (err) { next(err); }
+});
+
+// POST /api/transfers { to, amount_cents, note? } -> send money from checking (Ari + UI).
+// "to" is a payee name; known merchants match by name, anyone else goes through "MyFiat Transfer".
+app.post('/api/transfers', requireAuth, async (req, res, next) => {
+  try {
+    const to = String(req.body?.to || '').trim().slice(0, 80);
+    const amount_cents = Math.round(Number(req.body?.amount_cents));
+    if (!to) return res.status(400).json({ error: 'to is required' });
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) return res.status(400).json({ error: 'amount_cents must be positive' });
+    const account = await cashAccountFor(req.user.id);
+    if (!account) return res.status(400).json({ error: 'no cash account available' });
+    if (num(account.balance_cents) < amount_cents) {
+      return res.status(400).json({ error: 'insufficient funds', available_cents: num(account.balance_cents) });
+    }
+    const merchant = (await db.get('SELECT id, name FROM merchants WHERE lower(name) = lower(?)', [to])) ||
+      (await db.get("SELECT id, name FROM merchants WHERE name = 'MyFiat Transfer'"));
+    if (!merchant) return res.status(500).json({ error: 'transfer rail unavailable' });
+    const description = String(req.body?.note || '').trim().slice(0, 120) ||
+      (merchant.name === 'MyFiat Transfer' ? `Transfer to ${to}` : `Payment to ${merchant.name}`);
+    await db.run('UPDATE accounts SET balance_cents = balance_cents - ? WHERE id = ?', [amount_cents, account.id]);
+    const info = await db.run(
+      `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
+       VALUES (?, ?, ?, 'USD', 'succeeded', ?, ?)`,
+      [req.user.id, merchant.id, amount_cents, description, new Date().toISOString()]);
+    const after = await db.get('SELECT balance_cents FROM accounts WHERE id = ?', [account.id]);
+    res.status(201).json({ ok: true, transaction_id: info.lastInsertRowid, to, amount_cents, description,
+      from_account: account.name, balance_cents_after: num(after.balance_cents) });
   } catch (err) { next(err); }
 });
 

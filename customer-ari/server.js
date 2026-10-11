@@ -37,7 +37,10 @@ const MODEL = process.env.CHAT_MODEL || "hackathon-chat";
 // Shared tool loop. Returns { reply, actions } where actions lists any
 // state-changing tools that ran this turn (for the UI's action chips).
 async function runConversation({ systemPrompt, history, token, signal }) {
-  const messages = [{ role: "system", content: systemPrompt }, ...history];
+  // Ground every turn in the customer's real cards so Ari never has to ask which ones they have.
+  const cards = token ? await runTool("list_cards", {}, token).catch(() => "") : "";
+  const today = new Date().toISOString().slice(0, 10);
+  const messages = [{ role: "system", content: `${systemPrompt}\n\nToday is ${today}.${cards ? `\nCustomer's cards: ${cards}` : ""}` }, ...history];
   const actions = [];
   for (let step = 0; step < MAX_TOOL_STEPS; step++) {
     const completion = await client.chat.completions.create(

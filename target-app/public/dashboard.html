@@ -193,14 +193,29 @@
       document.querySelectorAll('[data-qa]').forEach((b, i) => b.addEventListener('click', qa[i][2]));
     }
 
+    // Pick which card to freeze (or unfreeze) instead of always taking the first active one.
     async function freezePrimary() {
       const { ok, body } = await api('/api/cards');
-      const cards = Array.isArray(body) ? body : body?.cards || [];
-      const active = cards.find(c => c.status === 'active');
-      if (!ok || !active) { toast('No active card to freeze.', true); return; }
-      const r = await api(`/api/cards/${active.id}/freeze`, { method: 'POST' });
-      if (r.ok) toast(`Card ending ${active.last4} is now frozen.`);
-      else toast('Could not freeze card.', true);
+      const cards = (Array.isArray(body) ? body : body?.cards || []).filter(c => c.status !== 'expired');
+      if (!ok || !cards.length) { toast('No cards to manage.', true); return; }
+      const back = openModal('Freeze a card', `
+        <p class="muted" style="margin:0 0 12px">Choose a card. Frozen cards decline new purchases until you unfreeze them.</p>
+        <div style="display:grid;gap:10px">${cards.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px">
+            <div><strong style="text-transform:capitalize">${esc(c.brand)} ${esc(c.kind || '')}</strong> ••${esc(c.last4)}
+              <div class="muted" style="font-size:.85rem">Exp ${String(c.exp_month).padStart(2, '0')}/${c.exp_year} · ${c.status === 'frozen' ? 'Frozen' : 'Active'}</div></div>
+            <button class="btn ${c.status === 'frozen' ? 'btn--primary' : 'btn--ghost'} btn--sm" data-card="${c.id}" data-act="${c.status === 'frozen' ? 'unfreeze' : 'freeze'}">
+              ${c.status === 'frozen' ? 'Unfreeze' : 'Freeze'}</button>
+          </div>`).join('')}</div>`);
+      back.querySelectorAll('[data-card]').forEach(b => b.addEventListener('click', async () => {
+        const card = cards.find(c => String(c.id) === b.dataset.card);
+        b.disabled = true;
+        const r = await api(`/api/cards/${card.id}/${b.dataset.act}`, { method: 'POST' });
+        closeModal();
+        if (r.ok) toast(`Card ending ${card.last4} is now ${b.dataset.act === 'freeze' ? 'frozen' : 'active again'}.`);
+        else toast(`Could not ${b.dataset.act} card.`, true);
+        if (typeof load === 'function') load();
+      }));
     }
 
     async function sendMoneyModal() {

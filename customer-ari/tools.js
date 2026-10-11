@@ -15,6 +15,8 @@ export const ACTION_TOOLS = new Set([
   "cancel_subscription",
   "dispute_charge",
   "resolve_alert",
+  "send_money",
+  "buy_crypto",
 ]);
 
 export const tools = [
@@ -208,6 +210,49 @@ export const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "send_money",
+      description:
+        "Send money from the customer's checking account to a person or payee (e.g. 'send $50 to Jordan', 'pay Lumen Energy $120'). CONFIRM the payee and amount with the customer first.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "Who to pay: a person's name or a payee/merchant name." },
+          amount: { type: "number", description: "Amount in US dollars, e.g. 50 or 120.25." },
+          note: { type: "string", description: "Optional memo." },
+        },
+        required: ["to", "amount"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_crypto_prices",
+      description: "Live market prices (CoinGecko, refreshed every ~20s) and 24h change for the crypto MyFiat supports: BTC, ETH, SOL, ADA, DOGE, XRP, LTC, AVAX, LINK. Optionally pass symbol for one coin.",
+      parameters: { type: "object", properties: { symbol: { type: "string", description: "Optional coin, e.g. BTC or bitcoin." } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "buy_crypto",
+      description:
+        "Buy (or sell) crypto with the customer's checking account at the live price: BTC, ETH, SOL, ADA, DOGE, XRP, LTC, AVAX or LINK. Give EITHER amount_usd (e.g. 'buy $100 of bitcoin') OR quantity in coins. CONFIRM the coin, side and amount with the customer first.",
+      parameters: {
+        type: "object",
+        properties: {
+          symbol: { type: "string", description: "Ticker or name: BTC, ETH, SOL, ADA, DOGE, XRP, LTC, AVAX, LINK (bitcoin, ethereum, solana, cardano, dogecoin, ripple, litecoin, avalanche, chainlink)." },
+          side: { type: "string", description: "buy (default) or sell." },
+          amount_usd: { type: "number", description: "Dollar amount to buy/sell." },
+          quantity: { type: "number", description: "Number of coins (alternative to amount_usd)." },
+        },
+        required: ["symbol"],
+      },
+    },
+  },
 ];
 
 // --- helpers ---------------------------------------------------------------
@@ -245,6 +290,10 @@ function wasteFlags(s) {
   if (s.duplicate) flags.push("possible duplicate");
   return flags;
 }
+
+const COIN_ALIASES = { BITCOIN: "BTC", ETHEREUM: "ETH", ETHER: "ETH", SOLANA: "SOL", CARDANO: "ADA", DOGECOIN: "DOGE",
+  RIPPLE: "XRP", LITECOIN: "LTC", AVALANCHE: "AVAX", CHAINLINK: "LINK" };
+const coinSymbol = (s) => { const raw = String(s || "").toUpperCase().replace(/[^A-Z]/g, ""); return COIN_ALIASES[raw] || raw; };
 
 // --- dispatch --------------------------------------------------------------
 export async function runTool(name, args, token) {
@@ -409,7 +458,7 @@ export async function runTool(name, args, token) {
           const l4 = c.last4 || c.last_four || c.card_last4 || "????";
           const exp = c.expiry || c.exp || (c.exp_month && c.exp_year ? `${c.exp_month}/${c.exp_year}` : "");
           const status = c.status || (c.frozen ? "frozen" : "active");
-          const nm = label(c, "nickname", "name", "brand", "network") || "Card";
+          const nm = [label(c, "nickname", "name", "brand", "network") || "Card", c.kind].filter(Boolean).join(" ");
           const expSoon = isExpiringSoon(c);
           return `${nm} ending ${l4}${exp ? `, exp ${exp}` : ""} — ${status}${expSoon ? " (expiring soon)" : ""} [id ${c.id}]`;
         });
@@ -430,6 +479,35 @@ export async function runTool(name, args, token) {
       }
 
       // --- actions (confirm first; persona enforces) ---
+      case "send_money": {
+        const cents = Math.round(Number(args.amount) * 100);
+        if (!(cents > 0)) return "I need a positive amount to send.";
+        const r = await apiPost("/api/transfers", { to: args.to, amount_cents: cents, note: args.note || "" }, token);
+        return `Sent ${usd(cents / 100)} to ${args.to} from ${r.from_account || "checking"}. New balance: ${usd((r.balance_cents_after ?? 0) / 100)}.`;
+      }
+      case "get_crypto_prices": {
+        const { prices = [], source, as_of } = await apiGet("/api/crypto/prices", token);
+        const want = coinSymbol(args.symbol);
+        const rows = want ? prices.filter((p) => p.symbol === want) : prices;
+        if (want && !rows.length) return `MyFiat doesn't support ${args.symbol}. Supported: ${prices.map((p) => p.symbol).join(", ")}.`;
+        const when = as_of ? new Date(as_of).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "America/Chicago" }) : "just now";
+        return `${source === "live" ? `Live prices as of ${when} Central` : "Prices (live feed unavailable, last known)"}: ` + rows.map((p) => `${p.name} (${p.symbol}) ${usd(p.price_cents / 100)}, ${p.change_24h_pct >= 0 ? "up" : "down"} ${Math.abs(p.change_24h_pct).toFixed(1)}% today`).join("; ");
+      }
+      case "buy_crypto": {
+        const symbol = coinSymbol(args.symbol);
+        const side = String(args.side || "buy").toLowerCase() === "sell" ? "sell" : "buy";
+        let quantity = Number(args.quantity);
+        if (!(quantity > 0)) {
+          const { prices = [] } = await apiGet("/api/crypto/prices", token);
+          const price = prices.find((p) => p.symbol === symbol)?.price_cents;
+          if (!price) return `MyFiat doesn't support ${args.symbol}. You can trade ${prices.map((p) => p.symbol).join(", ")}.`;
+          if (!(Number(args.amount_usd) > 0)) return "How much do you want to trade, in dollars or coins?";
+          quantity = Math.floor((Number(args.amount_usd) * 100 / price) * 1e8) / 1e8;
+        }
+        const r = await apiPost("/api/trade", { asset_class: "crypto", symbol, side, quantity }, token);
+        const f = r.fill || {};
+        return `${side === "buy" ? "Bought" : "Sold"} ${f.quantity ?? quantity} ${symbol} at ${usd((f.price_cents ?? 0) / 100)} each (${usd(((f.price_cents ?? 0) * (f.quantity ?? quantity)) / 100)} total). Cash left in checking: ${usd((f.cash_cents_after ?? 0) / 100)}.`;
+      }
       case "renew_card": {
         const r = await apiPost(`/api/cards/${encodeURIComponent(args.card_id)}/renew`, {}, token);
         return `Done — your replacement card is on the way. ${note(r)}`;

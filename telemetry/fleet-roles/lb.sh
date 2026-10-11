@@ -7,6 +7,11 @@ apt_install nginx
 UP=/etc/nginx/ari-net-upstream.conf
 # Placeholder until the controller syncs real app nodes (returns 502).
 [ -s "$UP" ] || echo 'server 127.0.0.1:65535 max_fails=0;' > "$UP"
+# HTTPS front door (Caddy on the voice server) sets X-Forwarded-For to the real visitor.
+# Kept out of ari-net-incident.conf, which the fleet controller rewrites.
+cat > /etc/nginx/conf.d/ari-front-door.conf <<'NG'
+set_real_ip_from 172.232.11.148;
+NG
 cat > /etc/nginx/conf.d/ari-net-log.conf <<'NG'
 # epoch status client "request" bytes upstream request_time  (read by the ari-net collector)
 log_format arinet '$msec $status $remote_addr "$request" $body_bytes_sent $upstream_addr $request_time';

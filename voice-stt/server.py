@@ -10,6 +10,7 @@ Env: STT_API_KEY (required), STT_MODEL_DIR, STT_VAD_MODEL, STT_HOST, STT_PORT, S
 import asyncio
 import json
 import os
+import re
 import secrets
 import time
 import uuid
@@ -59,11 +60,29 @@ recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
 decoder_pool = ThreadPoolExecutor(max_workers=1)
 
 
+# Demo vocabulary the model hears right but spells generically. Applied to every transcript.
+VOCAB = [
+    (r"\bmy ?fiat\b", "MyFiat"), (r"\bmy feet\b(?= (app|account|bank))", "MyFiat"),
+    (r"\b(harry|arie|ary)\b(?=[,.]? (what|can|is|are|please|i|we|how|do|ban|block|spin))", "Ari"),
+    (r"\bmaster ?card\b", "Mastercard"), (r"\bride ?now\b", "RideNow"), (r"\bstream ?ly\b", "Streamly"),
+    (r"\bd ?dos\b|\bd2s\b", "DDoS"), (r"\bengine ?x\b", "nginx"), (r"\blin ?ode\b", "Linode"),
+    (r"\bweb ?0?(\d)\b", r"web-0\1"), (r"\bweb zero (one|two|three)\b", lambda m: "web-0" + str(["one", "two", "three"].index(m[1]) + 1)),
+    (r"\b(\d),(\d{3})\b(?!,\d)", r"\1\2"),  # "ending in 7,781" -> 7781 (card digits, not amounts)
+]
+VOCAB = [(re.compile(p, re.I), r) for p, r in VOCAB]
+
+
+def normalize(text):
+    for pattern, repl in VOCAB:
+        text = pattern.sub(repl, text)
+    return text
+
+
 def transcribe(samples):
     stream = recognizer.create_stream()
     stream.accept_waveform(RATE, samples)
     recognizer.decode_stream(stream)
-    return stream.result.text.strip()
+    return normalize(stream.result.text.strip())
 
 
 def make_vad(endpointing_ms):
