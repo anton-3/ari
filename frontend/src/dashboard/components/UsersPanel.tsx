@@ -11,26 +11,14 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
   const series = (metrics?.series ?? []).filter(
     (point) => point.t >= now - 180000,
   )
-  const values = series.map((point) => point.activeUsers)
-  const first = values[0]
-  const last = metrics?.activeUsers
-  const seconds =
-    series.length > 1
-      ? Math.round((series[series.length - 1].t - series[0].t) / 1000)
-      : 0
-  const duration =
-    seconds >= 175
-      ? '3 min'
-      : seconds >= 60
-        ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-        : `${seconds}s`
-  const delta =
-    first && last !== undefined ? Math.round((last / first - 1) * 100) : null
-  const min = Math.max(0, Math.min(...values, last ?? 0) * 0.8)
-  const max = Math.max(min + 100, Math.max(...values, last ?? 0) * 1.15)
+  const values = series.map((point) => (point.requestsPerMinute ?? 0))
+  const last = metrics?.stale ? undefined : metrics?.requestsLast180s ?? undefined
+  const rate = metrics?.requestsPerMinute ?? 0
+  const min = 0
+  const max = Math.max(60, Math.max(...values, rate) * 1.15)
   const points = series.map((point) => ({
     x: 400 * (1 - (now - point.t) / 180000),
-    y: 140 * (1 - (point.activeUsers - min) / (max - min)),
+    y: 140 * (1 - ((point.requestsPerMinute ?? 0) - min) / (max - min)),
   }))
   const path = points
     .map(
@@ -43,9 +31,9 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
     : ''
 
   return (
-    <section className="dash-panel users-panel" aria-labelledby="users-title">
+    <section className={`dash-panel users-panel${metrics?.mode === 'surge' ? ' is-surge' : ''}`} aria-labelledby="users-title">
       <div className="panel-heading">
-        <h2 id="users-title">live users</h2>
+        <h2 id="users-title">requests</h2>
         <span>last 3 min</span>
       </div>
       <div className="users-value">
@@ -53,18 +41,17 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
           {last === undefined ? '—' : Math.round(last).toLocaleString('en-US')}
         </strong>
         <span>
-          {delta !== null && seconds > 0
-            ? `${delta >= 0 ? '+' : ''}${delta}% in ${duration}`
-            : 'collecting history'}
+          {metrics?.stale ? 'measurement unavailable' : `${Math.round(rate).toLocaleString('en-US')} requests/min now`}
         </span>
       </div>
       <div
         className="users-chart"
+        title="Rate from the last 5 seconds, expressed as requests per minute"
         role="img"
         aria-label={
           last === undefined
-            ? 'Waiting for active user data'
-            : `Active users over the last three minutes, currently ${last}`
+            ? 'Waiting for observed requests'
+            : `Request rate over the last three minutes; ${last} total requests, ${Math.round(rate)} requests per minute now`
         }
       >
         <div className="users-plot">
@@ -96,6 +83,7 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
             </span>
           ))}
         </div>
+        <div className="chart-unit">requests/min · 5s rate</div>
         <div className="chart-times">
           <span>3m ago</span>
           <span>2m</span>

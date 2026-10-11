@@ -1020,3 +1020,12 @@
     transition: none !important;
   }
 }
+
+.users-panel .chart-line, .users-panel .chart-area { transition: stroke .4s, fill .4s; }
+.users-panel.is-surge .chart-line { stroke: #e5484d; }
+.users-panel.is-surge .chart-area { fill: rgba(229,72,77,.12); }
+.users-panel.is-surge .chart-dot { background: #e5484d; box-shadow: 0 0 12px rgba(229,72,77,.4); }
+.chart-unit { color: var(--text-muted, #8d929b); font-size: 10px; margin-top: 4px; }
+.ari-event { animation: event-enter .18s ease-out; }
+@keyframes event-enter { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .ari-event { animation: none; } }

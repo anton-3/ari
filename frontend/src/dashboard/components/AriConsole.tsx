@@ -1,5 +1,6 @@
 import { ARI_PHONE } from '../config'
 import type { ActivityLine, FeedSource, LogEntry } from '../types'
+import { useEffect, useRef, useState } from 'react'
 
 const MAX_LINES = 5
 const NOTABLE = new Set(['warn', 'error', 'critical'])
@@ -44,6 +45,9 @@ export function AriConsole({
   logs: LogEntry[]
   source: FeedSource
 }) {
+  const [displayed, setDisplayed] = useState<Line[]>([])
+  const seen = useRef(new Set<string>())
+  const queue = useRef<Line[]>([])
   // Ari's own narration and anything worth attention come first; ordinary
   // traffic only fills the card while there is nothing else to show.
   const lines: Line[] = [
@@ -57,7 +61,7 @@ export function AriConsole({
         tone: 'ari',
       }),
     ),
-    ...logs.filter((log) => NOTABLE.has(log.level)).map(fromLog),
+    ...logs.map(fromLog),
   ]
   if (lines.length < MAX_LINES)
     lines.push(
@@ -67,7 +71,26 @@ export function AriConsole({
         .map(fromLog),
     )
   // Teletype order: oldest at the top, the newest line enters at the bottom.
-  const rows = lines.sort((a, b) => a.ts - b.ts).slice(-MAX_LINES)
+  useEffect(() => {
+    const fresh = lines.filter(line => !seen.current.has(line.key)).sort((a, b) => a.ts - b.ts)
+    for (const line of fresh) seen.current.add(line.key)
+    if (seen.current.size > 2000) seen.current = new Set(lines.map(line => line.key))
+    if (displayed.length === 0) setDisplayed(fresh.slice(-MAX_LINES))
+    else queue.current = [...queue.current, ...fresh].slice(-40)
+  // Input identity changes as live batches and Ari events arrive.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activity, logs])
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const next = queue.current.shift()
+      if (next) setDisplayed(previous => [...previous, next].slice(-MAX_LINES))
+    }, 90)
+    return () => window.clearInterval(timer)
+  }, [])
+  const newestAri = lines.filter(line => line.tone === 'ari').sort((a, b) => b.ts - a.ts)[0]
+  const latestTs = Math.max(0, ...lines.map(line => line.ts))
+  const pinned = newestAri && latestTs - newestAri.ts < 15000 && !displayed.some(line => line.key === newestAri.key)
+  const rows = pinned ? [...displayed.slice(-4), newestAri] : displayed
   const feeding = source === 'live' || source === 'polling'
 
   return (
