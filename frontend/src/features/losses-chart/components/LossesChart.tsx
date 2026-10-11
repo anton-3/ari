@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { Underlined } from '@/components/ui/Underlined'
 import { LossesBars } from '@/features/losses-chart/components/LossesBars'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReduceMotion'
 import { useScrollProgress } from '@/hooks/useScrollProgress'
@@ -44,7 +45,7 @@ export function LossesChart() {
               )}
             </div>
             <h2 className="h2 stakes__title">
-              {formatRounded(LATEST.usdBillions)}
+              <Underlined lead="$">{formatRounded(LATEST.usdBillions).replace(/^\$/, '')}</Underlined>
               <sup className="cite" aria-hidden="true">
                 *
               </sup>{' '}

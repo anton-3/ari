@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { Underlined } from '@/components/ui/Underlined'
 import { site } from '@/config/site'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReduceMotion'
 import { PhaseList } from '@/features/how-it-works/components/PhaseList'
@@ -49,7 +50,7 @@ export function HowItWorks() {
                 Scroll to play ↓
               </span>
             </div>
-            <h2 className="h2 how__title">Watch it reason about your network.</h2>
+            <h2 className="h2 how__title">Watch it <Underlined>reason</Underlined> about your network.</h2>
             <div className="how__grid">
               <PhaseList
                 active={phase}

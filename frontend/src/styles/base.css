@@ -290,6 +290,34 @@ button {
   }
 }
 
+/* Accent phrase with a sweep that draws in left to right once it is on screen.
+   The sweep is revealed by a clip rather than a stroke dash, which keeps the
+   line weight constant at any phrase width. */
+.underlined {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.underlined__text {
+  position: relative;
+}
+
+.underlined__sweep {
+  position: absolute;
+  left: 0;
+  /* Hung from the top so a wide phrase's taller sweep grows away from the text. */
+  top: 94%;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  clip-path: inset(-8px 100% -8px -8px);
+  transition: clip-path 0.9s cubic-bezier(0.65, 0, 0.35, 1) 0.15s;
+}
+
+.underlined--drawn .underlined__sweep {
+  clip-path: inset(-8px -8px -8px -8px);
+}
+
 /* Type */
 .display {
   max-width: 13ch;
