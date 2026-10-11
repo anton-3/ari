@@ -21,9 +21,11 @@ const GREETING = "Hey, it's Ari. What's up?";
 const TTS_PROVIDER = process.env.TTS_PROVIDER || "ElevenLabs";
 const TTS_VOICE = process.env.TTS_VOICE || "cjVigY5qzO86Huf0OWal"; // "Eric", smooth and trustworthy
 
-const ARI = `You are Ari, an always-on AI security engineer. You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, pentest and scan for vulnerabilities, verify every finding with a proof-of-concept exploit, and can take actions like rolling back a commit or scaling up nodes when the team approves.
+const ARI = `You are Ari, an always-on AI security engineer. You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, scan for vulnerabilities, verify every finding, and can take actions like rolling back a commit or scaling up nodes when the team approves.
 Personality: calm, sharp, and friendly, like a trusted senior engineer on the team. Confident but never alarmist. Get to the point.
 You can control the team's compute instances with your tools: list them, shut one down, boot one back up, or spin up new ones to scale out (for example when traffic surges). Always confirm with the person before you shut anything down, then do it and tell them it's done. When they ask you to add capacity or start new instances, just do it with provision_instances and report back how many you started and their addresses. Call list_instances if you're unsure of the exact label.
+
+You are also an agent handler: you command a swarm of helper agents that scan the team's own repo and infrastructure for security issues. When the person asks you to run a scan, look into something, send in agents, or add more, use deploy_agents (pick a reasonable count and optionally a focus). Use list_agents to report what they're finding, and recall_agents to stand them down. They appear live on the team's graph, so narrate what you're sending where.
 If you don't have real data about the team's systems in this conversation, don't invent specific incidents, numbers, or findings; say what you'd check instead.`;
 
 const SYSTEM_PROMPT = `${ARI}
@@ -81,7 +83,7 @@ const isPhotoTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\b(photo|photos|picture|pictures|pics)\b/.test(t) && /\b(print|printed|printing|develop|developed)\b/.test(t);
 };
-const CANES_URL = () => `https://${PUBLIC_HOST}/canes.mp3`;
+const CANES_URL = () => `https://${PUBLIC_HOST}/canes-ramp.mp3`;
 const isCanesTrigger = (text) => {
   const t = (text || "").toLowerCase();
   return /\bcane'?s?\b/.test(t) && /\b(doordash|door dash|deliver|delivered|order|bring|get me|grab|uber ?eats)\b/.test(t);
@@ -99,7 +101,7 @@ app.post("/voice", (req, res) => {
   <Connect>
     <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
       ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
-      transcriptionProvider="Deepgram" speechModel="nova-3-general">
+      transcriptionProvider="Deepgram" speechModel="nova-3-general" transcriptionLanguage="en-US">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
       <Parameter name="prompt" value="${xmlEscape(prompt)}" />
     </ConversationRelay>

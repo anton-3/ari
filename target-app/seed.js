@@ -1,5 +1,6 @@
 /*
- * AcmePay - seed script. Populates the SQLite DB with realistic sample data:
+ * AcmePay - seed script. Populates the DB (SQLite, or Postgres when DATABASE_URL
+ * is set) with realistic sample data:
  *   ~20 users, a handful of merchants, ~50 transactions.
  * Idempotent-ish: pass --force to wipe and reseed.
  * DEMO security target. See SECURITY-NOTES.md.
@@ -25,80 +26,73 @@ const FIRST = ['James','Maria','Wei','Aisha','Carlos','Priya','Tom','Sofia','Lia
 const LAST = ['Walker','Santos','Chen','Khan','Reyes','Patel','Nguyen','Rossi','Murphy','Haddad',
   'Tanaka','Petrov','Cohen','Ali','Yamamoto','Okafor','Farah','Novak','Silva','Dubois'];
 
-function reseed(force) {
-  const db = getDb();
-  initSchema(db);
+async function reseed(force) {
+  const db = await getDb();
+  await initSchema(db);
 
-  if (isSeeded(db) && !force) {
+  if ((await isSeeded(db)) && !force) {
     console.log('DB already seeded. Use "node seed.js --force" to wipe and reseed.');
     return;
   }
 
-  db.exec('DELETE FROM transactions; DELETE FROM users; DELETE FROM merchants;');
+  await db.exec('DELETE FROM transactions; DELETE FROM users; DELETE FROM merchants;');
 
-  const insMerchant = db.prepare(
-    'INSERT INTO merchants (name, category, country, created_at) VALUES (?, ?, ?, ?)'
-  );
   const merchantIds = [];
-  const seedMerchants = db.transaction(() => {
-    for (const m of MERCHANTS) {
-      const info = insMerchant.run(m.name, m.category, m.country, iso('2023-01-15'));
-      merchantIds.push(info.lastInsertRowid);
-    }
-  });
-  seedMerchants();
+  for (const m of MERCHANTS) {
+    const info = await db.run(
+      'INSERT INTO merchants (name, category, country, created_at) VALUES (?, ?, ?, ?)',
+      [m.name, m.category, m.country, iso('2023-01-15')]
+    );
+    merchantIds.push(info.lastInsertRowid);
+  }
 
-  const insUser = db.prepare(`INSERT INTO users
+  const insUser = (vals) => db.run(`INSERT INTO users
     (email, full_name, password_md5, role, ssn_last4, card_last4, balance_cents, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, vals);
   const userIds = [];
-  const seedUsers = db.transaction(() => {
-    // Known admin account for the demo (weak, well-known password).
-    const adminId = insUser.run(
-      'admin@acmepay.io', 'Dana Admin', md5('admin123'), 'admin',
-      '0007', '4242', 500000, iso('2023-02-01')
-    ).lastInsertRowid;
-    userIds.push(adminId);
+  // Known admin account for the demo (weak, well-known password).
+  userIds.push((await insUser([
+    'admin@acmepay.io', 'Dana Admin', md5('admin123'), 'admin',
+    '0007', '4242', 500000, iso('2023-02-01'),
+  ])).lastInsertRowid);
 
-    for (let i = 0; i < 19; i++) {
-      const fn = FIRST[i % FIRST.length];
-      const ln = LAST[(i * 3) % LAST.length];
-      const email = `${fn.toLowerCase()}.${ln.toLowerCase()}${i}@example.com`;
-      const pw = ['password1','qwerty','letmein','hunter2','sunshine'][i % 5];
-      const id = insUser.run(
-        email, `${fn} ${ln}`, md5(pw), 'customer',
-        String(1000 + i).slice(-4), String(4000 + i).slice(-4),
-        Math.floor(Math.random() * 400000), iso(`2023-${String((i % 12) + 1).padStart(2,'0')}-10`)
-      ).lastInsertRowid;
-      userIds.push(id);
-    }
-  });
-  seedUsers();
+  for (let i = 0; i < 19; i++) {
+    const fn = FIRST[i % FIRST.length];
+    const ln = LAST[(i * 3) % LAST.length];
+    const email = `${fn.toLowerCase()}.${ln.toLowerCase()}${i}@example.com`;
+    const pw = ['password1','qwerty','letmein','hunter2','sunshine'][i % 5];
+    const info = await insUser([
+      email, `${fn} ${ln}`, md5(pw), 'customer',
+      String(1000 + i).slice(-4), String(4000 + i).slice(-4),
+      Math.floor(Math.random() * 400000), iso(`2023-${String((i % 12) + 1).padStart(2,'0')}-10`),
+    ]);
+    userIds.push(info.lastInsertRowid);
+  }
 
-  const insTx = db.prepare(`INSERT INTO transactions
-    (user_id, merchant_id, amount_cents, currency, status, description, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const statuses = ['succeeded','succeeded','succeeded','pending','failed','refunded'];
   const descs = ['Order #', 'Invoice #', 'Subscription renewal #', 'Top-up #', 'Payout #'];
-  const seedTx = db.transaction(() => {
-    for (let i = 0; i < 52; i++) {
-      const uid = userIds[i % userIds.length];
-      const mid = merchantIds[(i * 2) % merchantIds.length];
-      const amount = (Math.floor(Math.random() * 20000) + 100);
-      const status = statuses[i % statuses.length];
-      const desc = descs[i % descs.length] + (10000 + i);
-      const day = String((i % 27) + 1).padStart(2, '0');
-      insTx.run(uid, mid, amount, 'USD', status, desc, iso(`2024-0${(i % 9) + 1}-${day}`));
-    }
-  });
-  seedTx();
+  for (let i = 0; i < 52; i++) {
+    const uid = userIds[i % userIds.length];
+    const mid = merchantIds[(i * 2) % merchantIds.length];
+    const amount = (Math.floor(Math.random() * 20000) + 100);
+    const status = statuses[i % statuses.length];
+    const desc = descs[i % descs.length] + (10000 + i);
+    const day = String((i % 27) + 1).padStart(2, '0');
+    await db.run(`INSERT INTO transactions
+      (user_id, merchant_id, amount_cents, currency, status, description, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [uid, mid, amount, 'USD', status, desc, iso(`2024-0${(i % 9) + 1}-${day}`)]);
+  }
 
+  const count = async (t) => Number((await db.get(`SELECT COUNT(*) AS n FROM ${t}`)).n);
   const counts = {
-    merchants: db.prepare('SELECT COUNT(*) n FROM merchants').get().n,
-    users: db.prepare('SELECT COUNT(*) n FROM users').get().n,
-    transactions: db.prepare('SELECT COUNT(*) n FROM transactions').get().n,
+    merchants: await count('merchants'),
+    users: await count('users'),
+    transactions: await count('transactions'),
   };
   console.log('Seed complete:', counts);
 }
 
-reseed(process.argv.includes('--force'));
+await reseed(process.argv.includes('--force'));
+const db = await getDb();
+if (db.end) await db.end();

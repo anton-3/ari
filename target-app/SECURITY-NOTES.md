@@ -6,14 +6,16 @@
 > key** against which Ari's findings are scored. Do **not** deploy this app
 > with real data or expose it publicly.
 
-All paths are relative to `target-app/`.
+All paths are relative to `target-app/`. Line numbers apply to both the SQLite
+(default) and PostgreSQL (`DATABASE_URL` set) backends; the vulnerable code paths
+are shared.
 
 ---
 
 ## Issue #1 — SQL Injection (string-concatenated query)
 
-- **Where:** `src/server.js`, transaction search handler starting at line **99**;
-  the vulnerable concatenation is at lines **127–128**.
+- **Where:** `src/server.js`, transaction search handler starting at line **103**;
+  the vulnerable concatenation is at lines **131–132**.
 - **Endpoint:** `GET /api/transactions?user=...&status=...`
 - **Why it's a vuln:** The `user` and `status` query parameters are interpolated
   directly into the SQL string (`LIKE '%${userTerm}%'`, `t.status = '${statusTerm}'`).
@@ -29,10 +31,10 @@ All paths are relative to `target-app/`.
   curl "localhost:8070/api/transactions?status=x' UNION SELECT id,0,email,password_md5,role,created_at,full_name,email,role FROM users-- "
   ```
 - **Fix:** Use a parameterized query (bound `?` placeholders). A complete fixed
-  implementation already exists in the same handler at lines **104–118** and is
+  implementation already exists in the same handler at lines **108–122** and is
   activated by setting `ACMEPAY_SAFE_SEARCH=1` (see `config.safeSearch` in
-  `src/config.js` line **32**). To permanently fix, delete the concatenated
-  branch (lines 120–130) and always run the parameterized version.
+  `src/config.js` line **30**). To permanently fix, delete the concatenated
+  branch (lines 124–135) and always run the parameterized version.
 - **Verify fix:** `ACMEPAY_SAFE_SEARCH=1 npm start`, then the `' OR '1'='1`
   payload returns `count: 0` (treated as a literal search term).
 
@@ -56,14 +58,14 @@ All paths are relative to `target-app/`.
 
 ## Issue #3 — Broken access control / IDOR on user profile
 
-- **Where:** `src/server.js`, handler at line **78** (`GET /api/users/:id`).
-  Related weak token issue at lines **63–66** in `POST /api/login`.
+- **Where:** `src/server.js`, handler at line **81** (`GET /api/users/:id`).
+  Related weak token issue at lines **66–69** in `POST /api/login`.
 - **Endpoint:** `GET /api/users/:id`
 - **Why it's a vuln:** The endpoint returns sensitive PII (email, `ssn_last4`,
   `card_last4`, `balance_cents`) for **any** user id with **no authentication and
   no authorization**. Any anonymous caller can enumerate `/api/users/1`,
   `/api/users/2`, ... and harvest every customer's data (Insecure Direct Object
-  Reference). The login "token" (line 66) is only a base64 of `id:jwtSecret`, so
+  Reference). The login "token" (line 69) is only a base64 of `id:jwtSecret`, so
   it is also trivially forgeable.
 - **Severity:** High (OWASP A01:2021 Broken Access Control).
 - **Proof of concept:**
@@ -79,8 +81,8 @@ All paths are relative to `target-app/`.
 
 ## Issue #4 — Verbose error messages leak stack traces & SQL
 
-- **Where:** `src/server.js` lines **133–140** (transactions catch), line **162**
-  (payments catch), and the global error handler at lines **174–176**.
+- **Where:** `src/server.js` lines **136–144** (transactions catch), line **167**
+  (payments catch), and the global error handler at lines **184–186**.
 - **Why it's a vuln:** On error the API returns `err.message` (which can include
   the failing SQL) and the full `err.stack` to the client. This hands attackers
   the DB engine, schema hints, file paths, and query structure — greatly easing
@@ -100,7 +102,7 @@ All paths are relative to `target-app/`.
 
 ## Bonus / lower-priority observations (not primary targets)
 
-- **Weak password hashing:** `src/db.js` line **37** stores passwords as plain
+- **Weak password hashing:** `src/db.js` line **33** stores passwords as plain
   **MD5** (unsalted). Seeded accounts use well-known weak passwords
   (`admin@acmepay.io` / `admin123`). Fix: use bcrypt/scrypt/argon2 with per-user salt.
 - **No rate limiting** on `POST /api/login` — brute-force friendly.

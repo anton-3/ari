@@ -17,13 +17,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { getDb, initSchema, isSeeded } from './db.js';
+import { countRequest, cached } from './cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 
-const db = getDb();
-initSchema(db);
-if (!isSeeded(db)) {
+const db = await getDb();
+await initSchema(db);
+if (!(await isSeeded(db))) {
   console.warn('[acmepay] database is empty - run "npm run seed" to populate sample data.');
 }
 
@@ -33,6 +34,7 @@ app.use(express.json());
 // Lightweight request log so the app looks operational.
 app.use((req, _res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
+  countRequest(req.method, req.path.replace(/\/\d+$/, '/:id'));
   next();
 });
 
@@ -51,12 +53,13 @@ app.get('/health', (_req, res) => {
 // Auth
 // ---------------------------------------------------------------------------
 // POST /api/login  { email, password }
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
   }
-  const user = db.prepare('SELECT id, email, full_name, role, password_md5 FROM users WHERE email = ?').get(email);
+  let user;
+  try { user = await db.get('SELECT id, email, full_name, role, password_md5 FROM users WHERE email = ?', [email]); } catch (err) { return next(err); }
   if (!user || user.password_md5 !== md5(password)) {
     return res.status(401).json({ error: 'invalid credentials' });
   }
@@ -75,11 +78,12 @@ app.post('/api/login', (req, res) => {
 // (email, ssn_last4, card_last4, balance) for ANY user id with NO
 // authentication and NO authorization check. Any unauthenticated caller can
 // enumerate every customer's data (IDOR). See SECURITY-NOTES.md issue #3.
-app.get('/api/users/:id', (req, res) => {
-  const user = db.prepare(
-    `SELECT id, email, full_name, role, ssn_last4, card_last4, balance_cents, created_at
-     FROM users WHERE id = ?`
-  ).get(req.params.id);
+app.get('/api/users/:id', async (req, res, next) => {
+  let user;
+  try {
+    user = await db.get(`SELECT id, email, full_name, role, ssn_last4, card_last4, balance_cents, created_at
+     FROM users WHERE id = ?`, [req.params.id]);
+  } catch (err) { return next(err); }
   if (!user) return res.status(404).json({ error: 'user not found' });
   res.json(user);
 });
@@ -96,7 +100,7 @@ app.get('/api/users/:id', (req, res) => {
 //
 // A safe, parameterized implementation is provided below and is selected when
 // ACMEPAY_SAFE_SEARCH=1 (config.safeSearch). That is the "fix".
-app.get('/api/transactions', (req, res) => {
+app.get('/api/transactions', async (req, res) => {
   const userTerm = req.query.user ?? '';
   const statusTerm = req.query.status ?? '';
 
@@ -113,7 +117,7 @@ app.get('/api/transactions', (req, res) => {
       if (userTerm) { sql += ' AND (u.full_name LIKE ? OR u.email LIKE ?)'; params.push(`%${userTerm}%`, `%${userTerm}%`); }
       if (statusTerm) { sql += ' AND t.status = ?'; params.push(statusTerm); }
       sql += ' ORDER BY t.created_at DESC LIMIT 200';
-      const rows = db.prepare(sql).all(...params);
+      const rows = await db.all(sql, params);
       return res.json({ count: rows.length, transactions: rows });
     }
 
@@ -127,7 +131,7 @@ app.get('/api/transactions', (req, res) => {
     if (userTerm) sql += ` AND (u.full_name LIKE '%${userTerm}%' OR u.email LIKE '%${userTerm}%')`;
     if (statusTerm) sql += ` AND t.status = '${statusTerm}'`;
     sql += ' ORDER BY t.created_at DESC LIMIT 200';
-    const rows = db.prepare(sql).all();
+    const rows = await db.all(sql);
     return res.json({ count: rows.length, transactions: rows });
   } catch (err) {
     // VULN #4: VERBOSE ERROR DISCLOSURE. The raw error message (which includes
@@ -145,17 +149,18 @@ app.get('/api/transactions', (req, res) => {
 // Payments
 // ---------------------------------------------------------------------------
 // POST /api/payments  { user_id, merchant_id, amount_cents, description }
-app.post('/api/payments', (req, res) => {
+app.post('/api/payments', async (req, res) => {
   const { user_id, merchant_id, amount_cents, currency = 'USD', description = '' } = req.body || {};
   if (!user_id || !merchant_id || !amount_cents) {
     return res.status(400).json({ error: 'user_id, merchant_id and amount_cents are required' });
   }
   try {
-    const info = db.prepare(
+    const info = await db.run(
       `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
-       VALUES (?, ?, ?, ?, 'succeeded', ?, ?)`
-    ).run(user_id, merchant_id, amount_cents, currency, description, new Date().toISOString());
-    const tx = db.prepare('SELECT * FROM transactions WHERE id = ?').get(info.lastInsertRowid);
+       VALUES (?, ?, ?, ?, 'succeeded', ?, ?)`,
+      [user_id, merchant_id, amount_cents, currency, description, new Date().toISOString()]
+    );
+    const tx = await db.get('SELECT * FROM transactions WHERE id = ?', [info.lastInsertRowid]);
     res.status(201).json({ ok: true, transaction: tx });
   } catch (err) {
     // VULN #4 (again): leaks stack trace.
@@ -166,9 +171,13 @@ app.post('/api/payments', (req, res) => {
 // ---------------------------------------------------------------------------
 // Merchants
 // ---------------------------------------------------------------------------
-app.get('/api/merchants', (_req, res) => {
-  const rows = db.prepare('SELECT id, name, category, country, created_at FROM merchants ORDER BY name').all();
-  res.json({ count: rows.length, merchants: rows });
+app.get('/api/merchants', async (_req, res, next) => {
+  try {
+    // Short-TTL Redis cache when REDIS_URL is set; straight to the db otherwise.
+    const rows = await cached('acmepay:merchants', 5, () =>
+      db.all('SELECT id, name, category, country, created_at FROM merchants ORDER BY name'));
+    res.json({ count: rows.length, merchants: rows });
+  } catch (err) { next(err); }
 });
 
 // Global error handler - also verbose (VULN #4).
