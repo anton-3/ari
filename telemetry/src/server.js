@@ -34,11 +34,10 @@ const fleet = new Fleet();
 const fleetAgents = new FleetAgents(fleet, { upsertVuln: (v) => sim.upsertVuln(v) });
 fleet.start();
 
-// Override the simulator's synthetic activeUsers with the REAL count of
-// distinct client IPs the lb logged over the rolling window, when available.
-function withRealActiveUsers(m) {
-  if (!m || fleet.activeUsers == null) return m;
-  return { ...m, activeUsers: fleet.activeUsers };
+// Live mode uses observed ingress requests. Simulation is an explicit opt-in.
+function observedMetrics(m) {
+  if (process.env.TELEMETRY_SIM === '1') return { ...m, source: 'simulated' };
+  return fleet.requests.snapshot(fleet.incidentView());
 }
 
 const app = express();
@@ -46,9 +45,9 @@ app.use(cors());                       // permissive CORS for the dashboard
 app.use(express.json({ limit: '256kb' }));
 
 // ---- HTTP API ----
-app.get('/api/metrics', (_req, res) => res.json(withRealActiveUsers(sim.snapshot())));
+app.get('/api/metrics', (_req, res) => res.json(observedMetrics(sim.snapshot())));
 
-app.get('/api/logs', (req, res) => res.json({ logs: sim.getLogs(req.query.limit) }));
+app.get('/api/logs', (req, res) => res.json({ logs: process.env.TELEMETRY_SIM === '1' ? sim.getLogs(req.query.limit) : fleet.requests.logs(Math.min(200, Number(req.query.limit) || 200)) }));
 
 app.get('/api/topology', (_req, res) => res.json(sim.topology));
 
@@ -123,9 +122,42 @@ app.get('/api/fleet/incident', localOnly, (_req, res) => res.json(fleet.incident
 
 app.post('/api/fleet/block-ips', localOnly, async (req, res) => {
   try {
-    const { ips } = req.body || {};
-    if (!Array.isArray(ips)) return res.status(400).json({ ok: false, error: 'body must be { ips: [...] }' });
-    res.json(await fleet.blockIps(ips));
+    const { ips, incidentId } = req.body || {};
+    if (ips != null && !Array.isArray(ips)) return res.status(400).json({ ok: false, error: 'ips must be an array' });
+    res.json(await fleet.blockIps(ips, incidentId));
+  } catch (e) { sendErr(res, e); }
+});
+
+app.post('/api/fleet/activate-web', localOnly, (req, res) => {
+  try { res.status(202).json({ operation: fleet.activateStandby(req.body?.incidentId) }); }
+  catch (e) { sendErr(res, e); }
+});
+
+app.get('/api/demo/status', localOnly, (_req, res) => res.json({
+  metrics: fleet.requests.snapshot(fleet.incidentView()), incident: fleet.incidentView(),
+  serving: fleet.demo.serving, operations: fleet.demo.operations, notifications: fleet.demo.notifications,
+  standby: [...fleet.instances.keys()].map(id => fleet.nodeView(id)).find(n => n.label === 'web-03') || null,
+}));
+
+app.post('/api/demo/standby', localOnly, async (_req, res) => {
+  try {
+    const existing = fleet.nodesOfRole('app').find(n => n.label === 'web-03');
+    const node = existing ? fleet.nodeView(existing.id) : await fleet.createNode('app', { standby: true });
+    res.status(202).json({ node });
+  } catch (e) { sendErr(res, e); }
+});
+
+app.post('/api/demo/reset', localOnly, async (_req, res) => {
+  try {
+    if (Object.values(fleet.demo.operations).some(o => !['ready', 'failed'].includes(o.status))) throw Object.assign(new Error('activation is still running'), { status: 409 });
+    const ips = [...new Set(fleet.demo.incidents.flatMap(i => i.attackerIps.map(a => a.ip)))];
+    if (ips.length) await fleet.unblockIps({ ips });
+    for (const node of fleet.nodesOfRole('app').filter(n => n.label === 'web-03')) fleet.demo.serving[node.id] = 'standby';
+    fleet.demo.operations = {}; fleet.demo.notifications = {}; fleet.demo.incidents = [];
+    Object.assign(fleet.incident, { active: false, id: null, since: null, clearedAt: null, attackerIps: [], _trip: 0, _clear: 0, _baseline: 1 });
+    fleet.saveDemo();
+    await fleet.syncUpstream(); fleet.publish();
+    res.json({ ok: true });
   } catch (e) { sendErr(res, e); }
 });
 
@@ -144,6 +176,10 @@ app.delete('/api/fleet/nodes/:id', localOnly, async (req, res) => {
 });
 
 app.get('/api/reasoning', (req, res) => res.json({ lines: getReasoning(req.query.limit) }));
+app.post('/api/reasoning', localOnly, (req, res) => {
+  if (typeof req.body?.text !== 'string' || req.body.text.length > 1000) return res.sendStatus(400);
+  res.json(pushReasoning(req.body.text));
+});
 
 app.get('/health', (_req, res) => res.json({ ok: true, mode: sim.mode, uptimeMs: Date.now() - sim.startTime }));
 
@@ -163,7 +199,7 @@ function broadcast(obj) {
 wss.on('connection', (ws, req) => {
   ws.isLocal = isLoopback(req.socket.remoteAddress);
   // send a snapshot immediately on connect
-  try { ws.send(JSON.stringify({ type: 'metrics', data: withRealActiveUsers(sim.snapshot()) })); } catch { /* ignore */ }
+  try { ws.send(JSON.stringify({ type: 'metrics', data: observedMetrics(sim.snapshot()) })); } catch { /* ignore */ }
   try { ws.send(JSON.stringify({ type: 'agents', data: agentsState() })); } catch { /* ignore */ }
   if (ws.isLocal && fleet.active()) {
     try { ws.send(JSON.stringify({ type: 'fleet', data: fleet.snapshot() })); } catch { /* ignore */ }
@@ -181,7 +217,13 @@ fleet.onUpdate((data) => {
 });
 
 // push every log entry as it arrives
-sim.onLog((entry) => broadcast({ type: 'log', data: entry }));
+sim.onLog((entry) => { if (process.env.TELEMETRY_SIM === '1') broadcast({ type: 'log', data: entry }); });
+fleet.onRequests = (fresh) => {
+  // Batches avoid hundreds of React updates per second during the real burst.
+  const ids = new Set(fresh.map(r => r.id));
+  const logs = fleet.requests.logs(200).filter(r => ids.has(r.id));
+  if (logs.length) broadcast({ type: 'logs', data: { logs } });
+};
 
 // push each new reasoning line as it appears
 onReasoning((entry) => broadcast({ type: 'reasoning', data: entry }));
@@ -190,7 +232,7 @@ onReasoning((entry) => broadcast({ type: 'reasoning', data: entry }));
 // a fresh reasoning line (so ~1 line / 2s) based on current state.
 let tickCount = 0;
 setInterval(() => {
-  const data = withRealActiveUsers(sim.tick());
+  const data = observedMetrics(sim.tick());
   broadcast({ type: 'metrics', data });
 
   const real = fleet.active();
@@ -218,5 +260,5 @@ if (LIVE_TARGET) {
 
 server.listen(PORT, () => {
   console.log(`[ari-telemetry] listening on http://localhost:${PORT}`);
-  console.log(`[ari-telemetry] WS at ws://localhost:${PORT}/ws | mode=${sim.mode}` + (LIVE_TARGET ? ` | live target=${LIVE_TARGET}` : ' | synthetic mode'));
+  console.log(`[ari-telemetry] WS at ws://localhost:${PORT}/ws | ${process.env.TELEMETRY_SIM === '1' ? 'explicit simulation' : 'observed nginx request metrics'}`);
 });

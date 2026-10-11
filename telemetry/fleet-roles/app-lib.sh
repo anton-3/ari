@@ -23,7 +23,7 @@ write_app_env() {
   (umask 077; {
     echo "NODE_ENV=production"
     echo "PORT=3000"
-    echo "DATABASE_URL=postgres://myfiat:$DB_PASS@$DB_HOST:5432/myfiat"
+    echo "DATABASE_URL=postgres://${DB_USER:-myfiat}:$DB_PASS@$DB_HOST:5432/${DB_NAME:-myfiat}"
     if [ -n "${REDIS_HOST:-}" ]; then echo "REDIS_URL=redis://:$REDIS_PASS@$REDIS_HOST:6379"; fi
   } > /etc/ari-net/app.env)
   chown myfiat /etc/ari-net/app.env

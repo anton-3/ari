@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "PORT=8090 node --env-file-if-exists=../.env src/server.js",
+    "test": "node --test test/*.test.js && python3 -m unittest discover -s test -p 'test_*.py'",
     "surge": "node src/cli.js surge",
     "normal": "node src/cli.js normal",
     "drill:ddos": "node src/fleet/drill-ddos.js",
