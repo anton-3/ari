@@ -5,3 +5,4 @@ telemetry/.fleet/
 backend/.demo/
 frontend/dist/
 *.tsbuildinfo
+.dev-logs/
