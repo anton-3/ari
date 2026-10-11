@@ -80,7 +80,7 @@ export async function sendSms(to, body) {
 
 export async function openRateLimitPr({ note = '', to = process.env.DEMO_PHONE || '+19132658472' } = {}) {
   const branch = `ari/rate-limit-${Date.now()}`;
-  let state, url;
+  let state, url, commitSha;
   try {
     state = JSON.parse(await readFile(STATE, 'utf8'));
     if (!state.validated || Date.now() - state.preparedAt > 24 * 3600000) throw new Error('Run demo prepare to validate a fresh PR base');
@@ -96,6 +96,7 @@ export async function openRateLimitPr({ note = '', to = process.env.DEMO_PHONE |
     await writeFile(path.join(state.wt, check), `#!/usr/bin/env bash\nset -euo pipefail\ndir="$(cd "$(dirname "$0")" && pwd)"\nfile="$dir/fleet-roles/lb.sh"\ngrep -Fq '${ZONE}' "$file"\ngrep -Fq '${APPLY}' "$file"\ngrep -Fq 'limit_req_status 429;' "$file"\nbash -n "$file"\n# Run on a machine with nginx installed (for example the owned load balancer).\nnginx -t -c "$dir/rate-limit-validation.conf"\n`);
     await git(['add', LB_FILE, check, configFile], state.wt);
     await git(['commit', '-m', 'Add per-client request rate limiting to the reverse proxy'], state.wt, { env: ariCommitEnv() });
+    commitSha = (await git(['rev-parse', 'HEAD'], state.wt)).stdout.trim();
     await git(['push', '-u', 'origin', branch], state.wt);
     const bodyFile = path.join(state.wt, '.ari-pr-body.md');
     await writeFile(bodyFile, `Prepared by Ari in response to the incident.\n\nRequest floods can exhaust the MyFiat serving pool. This adds per-client nginx limiting at 10 requests/second with a burst of 20 and HTTP 429 responses.\n\nThe change is confined to a new branch and is not deployed by this action.\n\nValidation: generated nginx configuration passed nginx -t during demo preparation; bash telemetry/check-rate-limit.sh checks the committed template.\n${note ? '\n' + note + '\n' : ''}`);
@@ -105,7 +106,7 @@ export async function openRateLimitPr({ note = '', to = process.env.DEMO_PHONE |
     if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(url)) throw new Error('GitHub did not return a real PR URL');
     try {
       const sms = await sendSms(to, `Ari: rate-limiting PR is ready — ${url}`);
-      return { ok: true, branch, url, smsStatus: sms.status, smsSid: sms.sid };
-    } catch (error) { return { ok: false, branch, url, smsStatus: 'failed', error: error.message }; }
-  } catch (error) { return { ok: false, branch, url, error: error.message }; }
+      return { ok: true, branch, url, commitSha, smsStatus: sms.status, smsSid: sms.sid };
+    } catch (error) { return { ok: false, branch, url, commitSha, smsStatus: 'failed', error: error.message }; }
+  } catch (error) { return { ok: false, branch, url, commitSha, error: error.message }; }
 }

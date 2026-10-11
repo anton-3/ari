@@ -148,6 +148,7 @@ export class Fleet {
   }
 
   async notifyIncident() {
+    if (this.demo.resetting) return;
     const inc = this.incidentView();
     if (!inc.active || !inc.id || process.env.DEMO_CALLS_ENABLED === '0' || this.demo.notifications[inc.id]) return;
     this.demo.notifications[inc.id] = { status: 'dispatching', at: Date.now() };
@@ -481,7 +482,7 @@ export class Fleet {
 
   // Read a short window of the lb access log and run the DDoS detector.
   async pollIncident() {
-    if (this.incident._busy) return;
+    if (this.demo.resetting || this.incident._busy) return;
     const lb = this.lbNode();
     const inc = this.incident;
     if (!lb) { if (inc.active) this._setIncident(false, null); return; }

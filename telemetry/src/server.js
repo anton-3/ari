@@ -105,6 +105,13 @@ function localOnly(req, res, next) {
   if (!isLoopback(req.socket.remoteAddress)) return res.status(403).json({ ok: false, error: 'fleet API is localhost-only' });
   next();
 }
+function localDemoOnly(req, res, next) {
+  if (!isLoopback(req.socket.remoteAddress) || !['localhost', '127.0.0.1', '[::1]'].includes(req.hostname)) return res.sendStatus(403);
+  try {
+    if (req.headers.origin && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(req.headers.origin).hostname)) return res.sendStatus(403);
+  } catch { return res.sendStatus(403); }
+  next();
+}
 const sendErr = (res, e) => res.status(e.status || 500).json({ ok: false, error: e.message });
 
 app.get('/api/fleet', localOnly, (_req, res) => res.json(fleet.snapshot()));
@@ -121,6 +128,7 @@ app.post('/api/fleet/nodes', localOnly, async (req, res) => {
 app.get('/api/fleet/incident', localOnly, (_req, res) => res.json(fleet.incidentView()));
 
 app.post('/api/fleet/block-ips', localOnly, async (req, res) => {
+  if (fleet.demo.resetting) return res.status(409).json({ error: 'Demo reset is in progress' });
   try {
     const { ips, incidentId } = req.body || {};
     if (ips != null && !Array.isArray(ips)) return res.status(400).json({ ok: false, error: 'ips must be an array' });
@@ -129,15 +137,40 @@ app.post('/api/fleet/block-ips', localOnly, async (req, res) => {
 });
 
 app.post('/api/fleet/activate-web', localOnly, (req, res) => {
+  if (fleet.demo.resetting) return res.status(409).json({ error: 'Demo reset is in progress' });
   try { res.status(202).json({ operation: fleet.activateStandby(req.body?.incidentId) }); }
   catch (e) { sendErr(res, e); }
 });
 
 app.get('/api/demo/status', localOnly, (_req, res) => res.json({
+  resetting: !!fleet.demo.resetting,
+  cooldownRemainingMs: Math.max(0, ...fleet.requests.window(180).filter(r => /^203\.0\.113\.(10|11|12|13|14)$/.test(r.ip)).map(r => r.ts + 180000 - Date.now())),
   metrics: fleet.requests.snapshot(fleet.incidentView()), incident: fleet.incidentView(),
   serving: fleet.demo.serving, operations: fleet.demo.operations, notifications: fleet.demo.notifications,
   standby: [...fleet.instances.keys()].map(id => fleet.nodeView(id)).find(n => n.label === 'web-03') || null,
 }));
+
+// Browser reset requests use the telemetry origin; orchestration stays in the
+// backend process that owns the durable voice/PR jobs.
+app.all('/api/demo/reset-run', localDemoOnly, async (req, res) => {
+  try {
+    if (!['GET', 'POST'].includes(req.method)) return res.sendStatus(405);
+    const response = await fetch(`${process.env.ARI_BACKEND_URL || 'http://localhost:8080'}/demo/reset-run`, {
+      method: req.method, ...(req.method === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}), signal: AbortSignal.timeout(5000),
+    });
+    res.status(response.status).json(await response.json());
+  } catch (e) { sendErr(res, e); }
+});
+
+app.post('/api/demo/maintenance', localDemoOnly, async (req, res) => {
+  if (typeof req.body?.resetting !== 'boolean') return res.sendStatus(400);
+  fleet.demo.resetting = req.body.resetting;
+  fleet.saveDemo();
+  const deadline = Date.now() + 20000;
+  while (fleet.incident._busy && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  if (fleet.incident._busy) return res.status(409).json({ error: 'Incident detector is still finishing; retry reset' });
+  res.json({ ok: true });
+});
 
 app.post('/api/demo/standby', localOnly, async (_req, res) => {
   try {
@@ -147,7 +180,7 @@ app.post('/api/demo/standby', localOnly, async (_req, res) => {
   } catch (e) { sendErr(res, e); }
 });
 
-app.post('/api/demo/reset', localOnly, async (_req, res) => {
+app.post('/api/demo/reset', localDemoOnly, async (_req, res) => {
   try {
     if (Object.values(fleet.demo.operations).some(o => !['ready', 'failed'].includes(o.status))) throw Object.assign(new Error('activation is still running'), { status: 409 });
     const ips = [...new Set(fleet.demo.incidents.flatMap(i => i.attackerIps.map(a => a.ip)))];
@@ -155,6 +188,8 @@ app.post('/api/demo/reset', localOnly, async (_req, res) => {
     for (const node of fleet.nodesOfRole('app').filter(n => n.label === 'web-03')) fleet.demo.serving[node.id] = 'standby';
     fleet.demo.operations = {}; fleet.demo.notifications = {}; fleet.demo.incidents = [];
     Object.assign(fleet.incident, { active: false, id: null, since: null, clearedAt: null, attackerIps: [], _trip: 0, _clear: 0, _baseline: 1 });
+    const lb = fleet.lbNode();
+    if (lb) fleet.issues.set(lb.id, 'ddos', null);
     fleet.saveDemo();
     await fleet.syncUpstream(); fleet.publish();
     res.json({ ok: true });

@@ -8,16 +8,17 @@ import { providerFetch } from './voice-http.js';
 import { kokoroPcm } from './voice-audio.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 const exec = promisify(execFile);
 const API = process.env.TELEMETRY_URL || 'http://localhost:8090';
-async function api(path, body) {
+export async function api(path, body) {
   const res = await fetch(API + path, { ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(25000) });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `telemetry ${res.status}`);
   return data;
 }
-async function remote(node, command, input) {
+export async function remote(node, command, input) {
   if (!node || !/^\d+\.\d+\.\d+\.\d+$/.test(node.publicIp)) throw new Error('owned fleet node is unavailable');
   const result = await sshRun(node.publicIp, command, { input, timeoutMs: 20000 });
   if (result.code !== 0) throw new Error(`${node.label}: ${result.stderr.trim() || result.stdout.trim()}`);
@@ -60,6 +61,12 @@ systemctl daemon-reload
 systemctl restart ari-traffic
 `);
   console.log('Real request reader, client-IP trust and 1 req/s baseline deployed.');
+  await prepareNextTake(nodes);
+}
+
+// Repeat takes reuse the installed traffic/logging setup and warm standby.
+export async function prepareNextTake(nodes) {
+  const lb = nodes.find(n => n.role === 'lb');
   const { node } = await api('/api/demo/standby', {});
   console.log(`Preparing ${node.label} (${node.id}). Bootstrap runs in telemetry; this may take minutes once.`);
   const started = Date.now();
@@ -76,7 +83,7 @@ systemctl restart ari-traffic
   console.log('web-03 is warm; the future PR patch passed nginx validation. No PR has been published.');
 }
 
-async function preflight(nodes) {
+export async function preflight(nodes) {
   const status = await api('/api/demo/status');
   const errors = [];
   if (status.metrics.stale) errors.push('request feed is stale');
@@ -86,34 +93,39 @@ async function preflight(nodes) {
   let voice;
   try { voice = voiceConfig(); } catch (e) { errors.push(e.message); }
   for (const key of ['TWILIO_SID', 'TWILIO_AUTH_TOKEN', 'PUBLIC_HOST', 'OPENAI_API_KEY']) if (!process.env[key]) errors.push(`${key} is missing`);
-  try {
+  const checks = [];
+  checks.push((async () => { try {
     const { stdout } = await exec('gh', ['api', 'repos/anton-3/hackmid2026', '--jq', '.permissions.push'], { timeout: 10000 });
     if (stdout.trim() !== 'true') throw new Error('no push permission');
-  } catch { errors.push('GitHub push access failed'); }
-  try {
-    const response = await providerFetch(`https://${process.env.PUBLIC_HOST}/`, { signal: AbortSignal.timeout(5000) });
+  } catch { errors.push('GitHub push access failed'); } })());
+  checks.push((async () => { try {
+    const [response, readiness] = await Promise.all([
+      providerFetch(`https://${process.env.PUBLIC_HOST}/`, { signal: AbortSignal.timeout(5000) }),
+      providerFetch(`https://${process.env.PUBLIC_HOST}/health/voice`, { signal: AbortSignal.timeout(5000) }),
+    ]);
     if (!response.ok || (await response.text()).trim() !== 'ok') throw new Error('unreachable');
-    const readiness = await providerFetch(`https://${process.env.PUBLIC_HOST}/health/voice`, { signal: AbortSignal.timeout(5000) });
     if (!readiness.ok || !(await readiness.json()).incidentGreetingReady) throw new Error('incident opening audio is not prepared; restart backend');
-  } catch { errors.push('public voice tunnel is unavailable'); }
+  } catch { errors.push('public voice tunnel is unavailable'); } })());
   if (voice?.stack === 'custom') {
-    try {
+    checks.push((async () => { try {
       for await (const bytes of kokoroPcm(voice, 'Hello, ready for the incident demo.', new AbortController().signal)) {
         if (bytes.length) break;
       }
-    } catch (e) { errors.push(`speech provider preflight failed: ${e.message}`); }
+    } catch (e) { errors.push(`speech provider preflight failed: ${e.message}`); } })());
   }
   try {
     const prepared = JSON.parse(await readFile(new URL('./.demo/pr-prepared.json', import.meta.url), 'utf8'));
     if (!prepared.validated || Date.now() - prepared.preparedAt > 86400000) errors.push('PR preparation expired');
   } catch { errors.push('PR worktree not prepared'); }
   const lb = nodes.find(n => n.role === 'lb');
-  await remote(lb, 'nginx -t && curl -fsS --max-time 2 http://127.0.0.1/health >/dev/null');
-  if (status.standby?.status === 'running') await remote(status.standby, 'curl -fsS --max-time 2 http://127.0.0.1:3000/health >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/users/1 >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/merchants >/dev/null');
+  checks.push(remote(lb, 'nginx -t && curl -fsS --max-time 2 http://127.0.0.1/health >/dev/null').catch(e => errors.push(e.message)));
+  if (status.standby?.status === 'running') checks.push(remote(status.standby, 'curl -fsS --max-time 2 http://127.0.0.1:3000/health >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/users/1 >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/merchants >/dev/null').catch(e => errors.push(e.message)));
+  await Promise.all(checks);
   if (errors.length) throw new Error(errors.join('\n'));
   console.log(`Preflight passed: ${status.metrics.requestsLast180s} real requests/3 min; web-03 ready. Verify the phone is available and the public voice tunnel is still live.`);
 }
 
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 const command = process.argv[2] || 'status';
 try {
   const { nodes } = await api('/api/fleet');
@@ -126,3 +138,4 @@ try {
     console.log(command === 'reset' ? 'Reset complete. Wait 3 minutes for the observed traffic window to normalize; prepare a fresh PR worktree before the next PR take.' : 'Attack generator stopped.');
   } else throw new Error('Use prepare, preflight, status, stop or reset');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
+}
