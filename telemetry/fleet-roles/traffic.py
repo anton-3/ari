@@ -65,6 +65,35 @@ def client_ip():
     return random.choice(USER_IPS)
 
 
+class BaselineCadence:
+    """Random drift, bursts and jitter around 1 req/s, without compounding.
+
+    Leave headroom for integer counts in five-second dashboard buckets:
+    intervals of 1/1.35..1/0.65 seconds yield 3..7 requests (36..84/min).
+    """
+    def __init__(self, rng=None):
+        self.rng = rng or random.Random()
+        self.long = 0.0
+        self.long_target = 0.0
+        self.short = 0.0
+        self.long_at = 0.0
+        self.short_at = 0.0
+        self.last_at = None
+
+    def rate(self, now):
+        if now >= self.long_at:
+            self.long_target = self.rng.uniform(-0.25, 0.25)
+            self.long_at = now + self.rng.uniform(30, 90)
+        if now >= self.short_at:
+            self.short = self.rng.uniform(-0.18, 0.18)
+            self.short_at = now + self.rng.uniform(3, 9)
+        dt = 1.0 if self.last_at is None else max(0, now - self.last_at)
+        self.last_at = now
+        self.long += (self.long_target - self.long) * (1 - pow(2.718281828, -dt / 15))
+        noise = self.rng.uniform(-0.12, 0.12)
+        return max(0.65, min(1.35, 1 + self.long + self.short + noise))
+
+
 def read_mode():
     global mode
     while True:
@@ -160,10 +189,12 @@ def worker(idx):
 
 if __name__ == "__main__":
     if os.environ.get('DEMO_PROFILE') == '1':
-        # One actual request per second, five recurring demo clients. No fake counts.
+        # Variable real traffic around one request per second, five recurring clients.
         index = 0
+        cadence = BaselineCadence()
         while True:
             started = time.monotonic()
+            interval = 1 / cadence.rate(started)
             conn = http.client.HTTPConnection(LB, 80, timeout=2)
             try:
                 path = ['/api/users/1', '/api/users/2', '/health', '/api/merchants', '/api/users/3'][index % 5]
@@ -174,7 +205,7 @@ if __name__ == "__main__":
             finally:
                 conn.close()
             index += 1
-            time.sleep(max(0, 1 - (time.monotonic() - started)))
+            time.sleep(max(0, interval - (time.monotonic() - started)))
     threading.Thread(target=read_mode, daemon=True).start()
     for i in range(PLAN["surge"][0]):
         threading.Thread(target=worker, args=(i,), daemon=True).start()

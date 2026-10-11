@@ -10,7 +10,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { providerFetch } from './voice-http.js';
 import { INCIDENT_GREETING, incidentPrompt } from './incident.js';
 
-const config = voiceConfig({ ...process.env, ARI_VOICE_STACK: 'custom' });
+// Always a custom-audio run; ARI_VOICE_STACK=custom-with-deepgram picks Deepgram for the STT leg.
+const config = voiceConfig({ ...process.env, ARI_VOICE_STACK: process.env.ARI_VOICE_STACK === 'custom-with-deepgram' ? 'custom-with-deepgram' : 'custom' });
 const client = new OpenAI({ fetch: providerFetch });
 const tools = [...linode.tools, ...actions.tools];
 const events = [];

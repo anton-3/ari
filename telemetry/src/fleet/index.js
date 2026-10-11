@@ -190,7 +190,8 @@ export class Fleet {
       if (this.deleted.has(id)) continue;
       seen.add(id);
       this.instances.set(id, { inst, role: linode.roleOf(inst), label: inst.label, ...linode.ipsOf(inst) });
-      this._state(id);
+      const st = this._state(id);
+      if (st.reboot && inst.status !== 'running') st.reboot.sawDown = true;
     }
     for (const id of [...this.instances.keys()]) {
       if (!seen.has(id)) this._dropNode(id);
@@ -210,7 +211,8 @@ export class Fleet {
   async collect() {
     const targets = [...this.instances.entries()].filter(([id, n]) => {
       const st = this._state(id);
-      return n.inst.status === 'running' && n.publicIp && !st.deleting && !st.inflight;
+      return n.inst.status === 'running' && n.publicIp && !st.deleting && !st.inflight
+        && (!st.reboot || st.reboot.sawDown || Date.now() - st.reboot.startedAt > 15000);
     });
     const fresh = new Map();
     await Promise.all(targets.map(async ([id, n]) => {
@@ -227,7 +229,11 @@ export class Fleet {
           st.everOk = true;
           st.lastError = null;
           st.ready = s.ready;
-          if (s.ready && !st.boot.running) { st.error = null; st.phase = null; }
+          if (st.reboot && s.ready && (st.reboot.sawDown || Date.now() - st.reboot.startedAt > 15000)) {
+            st.reboot = null;
+            this.log(`[fleet] ${n.label} reboot complete`);
+          }
+          if (s.ready && !st.boot.running && !st.reboot) { st.error = null; st.phase = null; }
           if (s.controllerIp) this.controllerIp = s.controllerIp;
           fresh.set(id, { sample: s, at: r.at });
         } else {
@@ -817,6 +823,28 @@ export class Fleet {
     return operation;
   }
 
+  async rebootNode(id) {
+    if (!this.enabled) throw httpError(503, 'fleet disabled');
+    id = String(id);
+    const node = this.instances.get(id);
+    if (!node || !linode.isAriNet(node.inst)) throw httpError(403, 'not an ari-net instance; refusing');
+    const st = this._state(id);
+    if (st.deleting || st.reboot || this.nodeView(id).status !== 'running') throw httpError(409, 'server cannot reboot now');
+    st.reboot = { startedAt: Date.now(), sawDown: false };
+    st.phase = 'rebooting server';
+    try {
+      await linode.rebootInstance(id);
+      st.ready = false;
+      if (node.publicIp) closeMaster(node.publicIp);
+      this.log(`[fleet] rebooting ${node.label} (${id})`);
+      return { ok: true };
+    } catch (e) {
+      st.reboot = null;
+      st.phase = null;
+      throw e;
+    }
+  }
+
   async deleteNode(id, confirmLabel) {
     if (!this.enabled) throw httpError(503, 'fleet disabled');
     id = String(id);
@@ -878,6 +906,7 @@ export class Fleet {
     let status;
     const ls = n.inst.status;
     if (st.deleting) status = 'deleting';
+    else if (st.reboot) status = Date.now() - st.reboot.startedAt < 2500 ? 'rebooting' : 'booting';
     else if (ls === 'provisioning' || st.phase === 'creating instance' && ls !== 'running' && ls !== 'booting') status = 'provisioning';
     else if (ls === 'booting' || ls === 'rebooting') status = 'booting';
     else if (ls === 'running') status = st.ready ? (st.failStreak >= 2 ? 'offline' : 'running') : 'booting';

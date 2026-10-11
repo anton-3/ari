@@ -42,6 +42,11 @@ test('configuration permits existing mode without custom keys, rejects incomplet
   assert.throws(() => voiceConfig({ ...env, STT_URL: 'ws://stt.test/v1/listen' }, false), /WSS/);
   assert.equal(voiceConfig({ ...env, STT_URL: 'ws://127.0.0.1:8001/v1/listen' }, false).stack, 'custom');
   assert.throws(() => voiceConfig({ ...env, STT_ENDPOINTING_MS: '10' }, false));
+  // custom-with-deepgram swaps only the STT leg: Deepgram's endpoint and key, Kokoro unchanged.
+  const dg = { ...noStt, ARI_VOICE_STACK: 'custom-with-deepgram', DEEPGRAM_API: 'dg-key' };
+  assert.deepEqual([voiceConfig(dg, false).sttUrl, voiceConfig(dg, false).deepgramKey, voiceConfig(dg, false).model], ['wss://api.deepgram.com/v1/listen', 'dg-key', 'nova-3']);
+  assert.throws(() => voiceConfig({ ...env, ARI_VOICE_STACK: 'custom-with-deepgram' }, false), /DEEPGRAM_API/);
+  assert.throws(() => voiceConfig({ ...dg, DEEPGRAM_MODEL: 'flux-general-en' }, false), /Flux/);
 });
 test('TwiML escapes greeting, carries opaque session only, and fallback changes greeting', () => {
   const s = session({ greeting: 'Hello <friend> & "you"', prompt: 'private incident context' });

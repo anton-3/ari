@@ -6,8 +6,10 @@ export function voiceConfig(env = process.env, checkFfmpeg = true) {
     if (!Number.isFinite(n) || n < min || n > max) throw new Error(`Invalid ${key}`);
     return n;
   };
+  const stack = env.ARI_VOICE_STACK || "custom";
+  const deepgram = stack === "custom-with-deepgram";
   const config = {
-    stack: env.ARI_VOICE_STACK || "custom",
+    stack,
     host: env.PUBLIC_HOST,
     twilioToken: env.TWILIO_AUTH_TOKEN,
     twilioSid: env.TWILIO_SID,
@@ -15,9 +17,10 @@ export function voiceConfig(env = process.env, checkFfmpeg = true) {
     ttsVoice: env.TTS_VOICE || "cjVigY5qzO86Huf0OWal",
     // custom transcribes with the self-hosted STT on the voice-model node (voice-stt/), which speaks
     // Deepgram's streaming /v1/listen protocol, so the Deepgram client and its option names are reused.
-    sttUrl: env.STT_URL,
-    deepgramKey: env.STT_API_KEY,
-    model: "parakeet-tdt-0.6b-v2",
+    // custom-with-deepgram keeps Kokoro but sends the same stream to Deepgram itself.
+    sttUrl: deepgram ? "wss://api.deepgram.com/v1/listen" : env.STT_URL,
+    deepgramKey: deepgram ? env.DEEPGRAM_API : env.STT_API_KEY,
+    model: deepgram ? env.DEEPGRAM_MODEL || "nova-3" : "parakeet-tdt-0.6b-v2",
     language: "en-US",
     endpointing: number("STT_ENDPOINTING_MS", 300, 50, 2000),
     utteranceEnd: 1000,
@@ -26,11 +29,12 @@ export function voiceConfig(env = process.env, checkFfmpeg = true) {
     voice: env.KOKORO_TTS_VOICE || "af_heart",
     speed: number("KOKORO_TTS_SPEED", 1, 0.5, 2),
   };
-  if (!["twilio", "custom"].includes(config.stack)) throw new Error("ARI_VOICE_STACK must be twilio or custom");
-  if (config.stack === "custom") {
-    for (const key of ["PUBLIC_HOST", "TWILIO_SID", "TWILIO_AUTH_TOKEN", "STT_URL", "STT_API_KEY", "KOKORO_TTS_BASE_URL", "KOKORO_TTS_API_KEY"]) {
+  if (!["twilio", "custom", "custom-with-deepgram"].includes(stack)) throw new Error("ARI_VOICE_STACK must be twilio, custom or custom-with-deepgram");
+  if (stack !== "twilio") {
+    for (const key of ["PUBLIC_HOST", "TWILIO_SID", "TWILIO_AUTH_TOKEN", ...(deepgram ? ["DEEPGRAM_API"] : ["STT_URL", "STT_API_KEY"]), "KOKORO_TTS_BASE_URL", "KOKORO_TTS_API_KEY"]) {
       if (!env[key]?.trim()) throw new Error(`Custom voice requires ${key}`);
     }
+    if (deepgram && !/^nova-(2|3)(-|$)/.test(config.model)) throw new Error("DEEPGRAM_MODEL must use the Nova v1 streaming protocol; Flux is not supported");
     const stt = new URL(config.sttUrl);
     const local = ["127.0.0.1", "localhost", "[::1]"].includes(stt.hostname);
     if (stt.protocol !== "wss:" && !(stt.protocol === "ws:" && local)) throw new Error("STT_URL must use WSS (WS is allowed for localhost only)");

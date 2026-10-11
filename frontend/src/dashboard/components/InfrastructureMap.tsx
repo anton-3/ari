@@ -14,7 +14,6 @@ import {
   treeFor,
 } from '../../graph/codetree'
 import { SEV_RANK, fmtMem, fmtRate } from '../../graph/helpers'
-import { forgetPos } from '../../graph/positions'
 import { useFleet } from '../../graph/useFleet'
 import type { FleetApi } from '../../graph/useFleet'
 import type {
@@ -41,12 +40,12 @@ const LEGEND: [string, string][] = [
   ['critical', C.red],
 ]
 
-function canDelete(node: FleetNode | undefined): node is FleetNode {
+function canReboot(node: FleetNode | undefined): node is FleetNode {
   return (
     !!node &&
     node.deletable &&
     !SYNTHETIC_ROLES.has(node.role) &&
-    node.status !== 'deleting' &&
+    node.status === 'running' &&
     !node.id.startsWith('pending-')
   )
 }
@@ -72,8 +71,7 @@ function FleetCard({
   const section = useRef<HTMLElement>(null)
   const hovered = useRef(false)
   const [picked, setPicked] = useState<IsoSel | null>(null)
-  const [confirm, setConfirm] = useState<FleetNode | null>(null)
-  const [typed, setTyped] = useState('')
+  const [rebootError, setRebootError] = useState<string | null>(null)
 
   const feed = fl?.fleet ?? null
   const fleet = useMemo<Fleet | null>(() => {
@@ -110,7 +108,7 @@ function FleetCard({
       ? links.find((link) => link.id === selected.id)
       : undefined
 
-  // Delete/Backspace asks to destroy the selected server; Esc steps out one level.
+  // Esc steps out one level; destructive keyboard shortcuts are disabled.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
@@ -134,28 +132,11 @@ function FleetCard({
             .slice(0, Math.max(0, items.length - drop))
             .map((item) => item.key),
         })
-      } else if (
-        (event.key === 'Delete' || event.key === 'Backspace') &&
-        canDelete(selectedNode)
-      ) {
-        event.preventDefault()
-        setTyped('')
-        setConfirm(selectedNode)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selected, selectedNode, codemap])
-
-  async function destroy() {
-    if (!fl || !confirm || typed !== confirm.label) return
-    const node = confirm
-    setConfirm(null)
-    if (await fl.deleteNode(node.id, typed)) {
-      forgetPos(node.label)
-      setPicked(null)
-    }
-  }
 
   const servers = nodes.filter((node) => !SYNTHETIC_ROLES.has(node.role))
   const running = servers.filter((node) => node.status === 'running').length
@@ -216,11 +197,14 @@ function FleetCard({
             path={selected?.kind === 'node' ? (selected.path ?? []) : []}
             codemap={codemap}
             onClose={() => setPicked(null)}
-            onDestroy={
-              canDelete(selectedNode)
+            onReboot={
+              canReboot(selectedNode)
                 ? () => {
-                    setTyped('')
-                    setConfirm(selectedNode)
+                    setPicked(null)
+                    setRebootError(null)
+                    void fl?.rebootNode(selectedNode.id).then((ok) => {
+                      if (!ok) setRebootError(`Could not reboot ${selectedNode.label}. Select the server to retry.`)
+                    })
                   }
                 : undefined
             }
@@ -243,59 +227,8 @@ function FleetCard({
         {fleet && simulated && (
           <span>simulated fleet · no real servers</span>
         )}
+        {rebootError && <span role="alert">{rebootError}</span>}
       </footer>
-      {confirm && (
-        <dialog
-          ref={(element) => {
-            if (!element || element.open) return
-            element.showModal()
-            element.querySelector('input')?.focus()
-          }}
-          className="dashboard-dialog"
-          onClose={() => setConfirm(null)}
-          aria-labelledby="destroy-title"
-        >
-          <div className="dialog-heading">
-            <h2 id="destroy-title">destroy server</h2>
-            <button
-              className="dialog-close"
-              onClick={() => setConfirm(null)}
-              aria-label="Close dialog"
-            >
-              ×
-            </button>
-          </div>
-          <p className="dialog-note">
-            {simulated
-              ? `This removes ${confirm.label} from the simulated fleet. No real server is touched.`
-              : `This permanently deletes the Linode server ${confirm.label} (${confirm.publicIp}, ${confirm.region}, ${confirm.type}). Its disk and everything on it is destroyed. This cannot be undone.`}
-          </p>
-          <input
-            className="finding-search mono"
-            aria-label={`Type ${confirm.label} to confirm`}
-            placeholder={`type ${confirm.label} to confirm`}
-            autoComplete="off"
-            spellCheck={false}
-            value={typed}
-            onChange={(event) => setTyped(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void destroy()
-            }}
-          />
-          <div className="fleet-destroy-actions">
-            <button className="text-button" onClick={() => setConfirm(null)}>
-              cancel
-            </button>
-            <button
-              className="fleet-destroy"
-              disabled={typed !== confirm.label}
-              onClick={() => void destroy()}
-            >
-              destroy {confirm.label}
-            </button>
-          </div>
-        </dialog>
-      )}
     </section>
   )
 }
@@ -355,13 +288,13 @@ function NodeDetail({
   path,
   codemap,
   onClose,
-  onDestroy,
+  onReboot,
 }: {
   node: FleetNode
   path: string[]
   codemap: Codemap | null
   onClose: () => void
-  onDestroy?: () => void
+  onReboot?: () => void
 }) {
   const tree = treeFor(codemap, node.role)
   const items = itemsOf(tree, path)
@@ -454,9 +387,9 @@ function NodeDetail({
         )}
       </dl>
       <Issues issues={node.issues ?? []} />
-      {onDestroy && (
-        <button type="button" className="fleet-detail-destroy" onClick={onDestroy}>
-          destroy server
+      {onReboot && (
+        <button type="button" className="fleet-detail-reboot" onClick={onReboot}>
+          reboot server
         </button>
       )}
     </DetailShell>

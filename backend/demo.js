@@ -106,7 +106,7 @@ export async function preflight(nodes) {
     if (!response.ok || (await response.text()).trim() !== 'ok') throw new Error('unreachable');
     if (!readiness.ok || !(await readiness.json()).incidentGreetingReady) throw new Error('incident opening audio is not prepared; restart backend');
   } catch { errors.push('public voice tunnel is unavailable'); } })());
-  if (voice?.stack === 'custom') {
+  if (voice?.stack && voice.stack !== 'twilio') {
     checks.push((async () => { try {
       for await (const bytes of kokoroPcm(voice, 'Hello, ready for the incident demo.', new AbortController().signal)) {
         if (bytes.length) break;

@@ -48,6 +48,9 @@ Note: the Linode account is capped at 10 total instances; "spin up 10" needs a l
 
 The default is `ARI_VOICE_STACK=custom`, using the self-hosted STT and Kokoro.
 `ARI_VOICE_STACK=twilio` leaves both transcription and speech to Twilio.
+`ARI_VOICE_STACK=custom-with-deepgram` is custom mode with direct Deepgram
+transcription in place of the self-hosted STT; it needs `DEEPGRAM_API` instead of
+`STT_URL` and `STT_API_KEY`.
 Leave the variable unset or set it explicitly in your private `.env`:
 
 ```bash
@@ -65,10 +68,12 @@ mode just because the environment changes.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ARI_VOICE_STACK` | `custom` | `twilio` or `custom` |
+| `ARI_VOICE_STACK` | `custom` | `twilio`, `custom` or `custom-with-deepgram` |
 | `STT_URL` | required for custom | Self-hosted STT `/v1/listen` WebSocket; WSS, or WS on localhost |
 | `STT_API_KEY` | required for custom | Self-hosted STT credential |
-| `STT_ENDPOINTING_MS` | `300` | Silence endpoint, 50–2000 ms |
+| `STT_ENDPOINTING_MS` | `300` | Silence endpoint, 50–2000 ms (both custom modes) |
+| `DEEPGRAM_API` | required for custom-with-deepgram | Direct Deepgram streaming credential |
+| `DEEPGRAM_MODEL` | `nova-3` | Nova v1 streaming model; Flux is not supported |
 | `KOKORO_TTS_VOICE` | `af_heart` | Voice supported by your Kokoro service |
 | `KOKORO_TTS_SPEED` | `1.0` | Speech speed, 0.5–2.0 |
 | `TTS_PROVIDER` / `TTS_VOICE` | ElevenLabs / Eric | ConversationRelay voice, including fallback |

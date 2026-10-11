@@ -67,7 +67,7 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
   const app = express();
   reset = new DemoReset({ jobs, checkBusy: () => [...store.sessions.values()].some(s => s.alive && s.bound) });
   const greetingCache = new Map();
-  app.get('/health/voice', (_req, res) => res.json({ stack: config.stack, incidentGreetingReady: config.stack !== 'custom' || greetingIsReady(config, INCIDENT_GREETING, greetingCache) }));
+  app.get('/health/voice', (_req, res) => res.json({ stack: config.stack, incidentGreetingReady: config.stack === 'twilio' || greetingIsReady(config, INCIDENT_GREETING, greetingCache) }));
   app.use(express.urlencoded({ extended: false }));
   app.use(express.json({ limit: '32kb' }));
   app.use(express.static(fileURLToPath(new URL("./public", import.meta.url))));
@@ -133,7 +133,7 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
       prompt: typeof req.query.prompt === "string" ? req.query.prompt : req.query.incidentId ? incidentPrompt({ label: req.query.label || 'load-balancer-01' }) : '',
       incidentId: typeof req.query.incidentId === 'string' ? req.query.incidentId : undefined,
       recipient: req.query.incidentId ? jobs.jobs[`call:${req.query.incidentId}`]?.recipient : req.body.From,
-    }, config.stack === "custom");
+    }, config.stack !== "twilio");
     if (!session.alive) return res.sendStatus(410);
     const cfg = { ...config, host: config.host || req.headers.host };
     log(session, "route", { stack: session.custom && !session.fallback ? "custom" : "twilio", sttModel: session.custom ? config.model : "nova-3-general" });
@@ -286,7 +286,7 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
     relayWss.close();
     mediaWss.close();
   }
-  return { app, server, store, fallback, close, warmGreeting: () => config.stack === 'custom' ? warmGreeting(config, INCIDENT_GREETING, greetingCache) : Promise.resolve() };
+  return { app, server, store, fallback, close, warmGreeting: () => config.stack !== 'twilio' ? warmGreeting(config, INCIDENT_GREETING, greetingCache) : Promise.resolve() };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
