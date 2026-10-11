@@ -100,7 +100,7 @@ function esc(s) {
 }
 function isCredit(tx) {
   const d = (tx.description || '') + ' ' + (tx.merchant || '');
-  if (/payroll|deposit|refund|transfer in|interest/i.test(d)) return true;
+  if (/payroll|deposit|refund|transfer in|transfer from|interest/i.test(d)) return true;
   if (tx.status === 'refunded') return true;
   if (tx.direction === 'credit') return true;
   return false;
@@ -144,6 +144,16 @@ function openModal(title, bodyHtml) {
   }
   return back;
 }
+// Keep a page's numbers live: refresh on Ari actions and every few seconds while visible,
+// so changes made by phone (or another tab) appear without a reload.
+function liveRefresh(fn, everyMs = 4000) {
+  let busy = false;
+  const run = async () => { if (busy || document.hidden || document.querySelector('.modal-back')) return; busy = true; try { await fn(); } finally { busy = false; } };
+  window.addEventListener('myfiat:changed', run);
+  document.addEventListener('visibilitychange', run);
+  setInterval(run, everyMs);
+}
+
 function closeModal() { document.querySelector('.modal-back')?.remove(); document.removeEventListener('keydown', escClose); }
 function escClose(e) { if (e.key === 'Escape') closeModal(); }
 
@@ -369,6 +379,8 @@ function mountAssistant(session) {
     const msg = reply.reply || reply.message || reply.text || reply.answer || (typeof reply === 'string' ? reply : 'I’m not sure how to help with that yet.');
     addMsg('bot', msg);
     addActions(reply.actions || reply.action_chips);
+    // Ari changed something (paid a card, moved money, froze a card): let the page refresh now.
+    if ((reply.actions || reply.action_chips || []).length) window.dispatchEvent(new Event('myfiat:changed'));
   }
   function setStatus(online) {
     const s = document.getElementById('asstStatus');

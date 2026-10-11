@@ -603,11 +603,17 @@ app.post('/api/trade', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/transfers { to, amount_cents, note? } -> send money from checking (Ari + UI).
-// "to" is a payee name; known merchants match by name, anyone else goes through "MyFiat Transfer".
+// POST /api/transfers { to, to_email?, amount_cents, note? } -> send money from checking (Ari + UI + sim users).
+// If to_email (or to) is another MyFiat customer, it's a real P2P transfer: their checking is credited and
+// they see it as incoming. Otherwise known merchants match by name, anyone else goes out via MyFiat Pay.
+async function merchantNamed(name, category) {
+  return (await db.get('SELECT id, name FROM merchants WHERE name = ? ORDER BY id LIMIT 1', [name])) ||
+    { id: (await db.run('INSERT INTO merchants (name, category, country, created_at) VALUES (?, ?, ?, ?)',
+      [name, category, 'US', new Date().toISOString()])).lastInsertRowid, name };
+}
 app.post('/api/transfers', requireAuth, async (req, res, next) => {
   try {
-    const to = String(req.body?.to || '').trim().slice(0, 80);
+    const to = String(req.body?.to || req.body?.to_email || '').trim().slice(0, 80);
     const amount_cents = Math.round(Number(req.body?.amount_cents));
     if (!to) return res.status(400).json({ error: 'to is required' });
     if (!Number.isFinite(amount_cents) || amount_cents <= 0) return res.status(400).json({ error: 'amount_cents must be positive' });
@@ -616,19 +622,33 @@ app.post('/api/transfers', requireAuth, async (req, res, next) => {
     if (num(account.balance_cents) < amount_cents) {
       return res.status(400).json({ error: 'insufficient funds', available_cents: num(account.balance_cents) });
     }
-    const merchant = (await db.get('SELECT id, name FROM merchants WHERE lower(name) = lower(?)', [to])) ||
-      (await db.get("SELECT id, name FROM merchants WHERE name = 'MyFiat Transfer'"));
-    if (!merchant) return res.status(500).json({ error: 'transfer rail unavailable' });
+    const email = String(req.body?.to_email || (to.includes('@') ? to : '')).toLowerCase();
+    const recipient = email ? await db.get('SELECT id, full_name FROM users WHERE lower(email) = ?', [email]) : null;
+    if (recipient && recipient.id === req.user.id) return res.status(400).json({ error: "can't send money to yourself" });
+    const recipientAccount = recipient ? await cashAccountFor(recipient.id) : null;
+    const payee = recipient ? recipient.full_name : to;
+    const known = recipient ? null : await db.get('SELECT id, name FROM merchants WHERE lower(name) = lower(?) ORDER BY id LIMIT 1', [to]);
+    const merchant = known || await merchantNamed('MyFiat Pay', 'transfers_out');
     const description = String(req.body?.note || '').trim().slice(0, 120) ||
-      (merchant.name === 'MyFiat Transfer' ? `Transfer to ${to}` : `Payment to ${merchant.name}`);
+      (known ? `Payment to ${known.name}` : `Transfer to ${payee}`);
+    const now = new Date().toISOString();
     await db.run('UPDATE accounts SET balance_cents = balance_cents - ? WHERE id = ?', [amount_cents, account.id]);
     const info = await db.run(
       `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
        VALUES (?, ?, ?, 'USD', 'succeeded', ?, ?)`,
-      [req.user.id, merchant.id, amount_cents, description, new Date().toISOString()]);
+      [req.user.id, merchant.id, amount_cents, description, now]);
+    if (recipientAccount) {
+      const incoming = await merchantNamed('MyFiat Transfer', 'transfer');
+      const sender = await db.get('SELECT full_name FROM users WHERE id = ?', [req.user.id]);
+      await db.run('UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?', [amount_cents, recipientAccount.id]);
+      await db.run(
+        `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
+         VALUES (?, ?, ?, 'USD', 'succeeded', ?, ?)`,
+        [recipient.id, incoming.id, amount_cents, `Transfer from ${sender?.full_name || 'a MyFiat customer'}`, now]);
+    }
     const after = await db.get('SELECT balance_cents FROM accounts WHERE id = ?', [account.id]);
-    res.status(201).json({ ok: true, transaction_id: info.lastInsertRowid, to, amount_cents, description,
-      from_account: account.name, balance_cents_after: num(after.balance_cents) });
+    res.status(201).json({ ok: true, transaction_id: info.lastInsertRowid, to: payee, amount_cents, description,
+      p2p: Boolean(recipientAccount), from_account: account.name, balance_cents_after: num(after.balance_cents) });
   } catch (err) { next(err); }
 });
 

@@ -76,6 +76,7 @@
       loadRecent();
       loadAlerts();
       loadCashflow();
+      liveRefresh(() => Promise.all([loadOverview(), loadRecent(), loadAlerts(), loadCashflow()]));
     }
 
     async function loadOverview() {

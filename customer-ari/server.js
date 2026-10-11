@@ -13,6 +13,9 @@ import OpenAI from "openai";
 
 import { tools, runTool, ACTION_TOOLS } from "./tools.js";
 import { apiGet } from "./myfiat.js";
+
+// Spoken audio only: say "My Fee-aht", not "fi-at". Chat text and transcripts keep "MyFiat".
+const sayable = (text) => String(text).replace(/\bMy ?Fiat\b/gi, "My Fee-aht").replace(/\bFiat\b/gi, "Fee-aht");
 import { CHAT_SYSTEM_PROMPT, VOICE_SYSTEM_PROMPT } from "./persona.js";
 import { placeSuspiciousChargeCall, DEMO_PHONE } from "./alert-call.js";
 
@@ -142,7 +145,7 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
+    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(sayable(greeting))}" interruptible="any"
       ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
       transcriptionProvider="Deepgram" speechModel="nova-3-general" transcriptionLanguage="en-US">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
@@ -198,7 +201,7 @@ wss.on("connection", (ws) => {
       // Persist the model/tool turns the loop produced so context carries over.
       messages.length = 0;
       messages.push(...updated.filter((m) => m.role !== "system"));
-      send({ type: "text", token: reply, last: true });
+      send({ type: "text", token: sayable(reply), last: true });
     } catch (err) {
       if (turn.aborted) {
         if (turn.heard) messages.push({ role: "assistant", content: turn.heard });

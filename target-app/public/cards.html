@@ -28,7 +28,7 @@
   <script src="/assets/app.js"></script>
   <script>
     const session = requireAuth();
-    if (session) { renderShell('/cards.html', session); load(); }
+    if (session) { renderShell('/cards.html', session); load(); liveRefresh(load); }
 
     const VISUALS = ['v-emerald', 'v-ink', 'v-sand'];
     function cardState(c) {

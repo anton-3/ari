@@ -3,6 +3,7 @@
 //
 //   node seed.js --force                          # fresh demo state in data/myfiat.db
 //   DATABASE_URL=postgres://... node sync-demo-users.js [path/to/myfiat.db]
+// Also opens accounts for the seed's community users (sim traffic) that have none.
 import Database from 'better-sqlite3';
 import pg from 'pg';
 
@@ -55,6 +56,19 @@ try {
     }
     console.log(`${email} -> user ${uid}: ${Object.values(ids.transactions).length} transactions, ${Object.values(ids.cards).length} cards`);
   }
+  // Community users (the seed's 18 @example.com logins) get a checking + savings account if they have none,
+  // so the traffic node's simulated customers can send each other money and trade.
+  const community = await db.query(
+    `SELECT u.id FROM users u WHERE u.email LIKE '%@example.com' AND u.id < 100
+       AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.user_id = u.id) ORDER BY u.id`);
+  for (const { id } of community.rows) {
+    const now = new Date().toISOString();
+    await insert('accounts', { user_id: id, kind: 'checking', name: 'MyFiat Checking', mask: `••${1000 + id}`,
+      balance_cents: 300000 + Math.floor(Math.random() * 700000), apy_bps: 10, created_at: now });
+    await insert('accounts', { user_id: id, kind: 'savings', name: 'MyFiat Savings', mask: `••${2000 + id}`,
+      balance_cents: 500000 + Math.floor(Math.random() * 2000000), apy_bps: 410, created_at: now });
+  }
+  console.log(`community users given accounts: ${community.rows.length}`);
   await db.query('COMMIT');
 } catch (err) {
   await db.query('ROLLBACK');
