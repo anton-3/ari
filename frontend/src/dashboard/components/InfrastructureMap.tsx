@@ -268,13 +268,9 @@ function FleetCard({
             ? `${servers.length} server${servers.length === 1 ? '' : 's'} · ${running} running · ${issues} issue${issues === 1 ? '' : 's'} · ${fmtRate(throughput)}`
             : 'connecting to telemetry'}
         </span>
-        <span>
-          {!fleet
-            ? ''
-            : simulated
-              ? 'simulated fleet · no real servers'
-              : 'live fleet'}
-        </span>
+        {fleet && simulated && (
+          <span>simulated fleet · no real servers</span>
+        )}
       </footer>
       {confirm && (
         <dialog

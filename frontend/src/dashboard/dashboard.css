@@ -54,8 +54,8 @@
   font-weight: 500;
   letter-spacing: -0.02em;
 }
-.dashboard-brand svg {
-  color: var(--accent);
+.dashboard-brand img {
+  display: block;
 }
 .project-switcher {
   position: relative;
@@ -521,8 +521,8 @@
   gap: 16px;
 }
 .finding-stats {
-  display: flex;
-  gap: 48px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 }
 .finding-stats > div {
   display: flex;
@@ -1000,9 +1000,6 @@
   }
   .users-value strong {
     font-size: 40px;
-  }
-  .finding-stats {
-    gap: 32px;
   }
   .finding-stats span {
     font-size: 11px;

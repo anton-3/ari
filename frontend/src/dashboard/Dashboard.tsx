@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Logo } from '@/components/ui/Logo'
 import './dashboard.css'
 import { useTelemetry } from './useTelemetry'
 import { ARI_PHONE, TELEMETRY_BASE_URL, WS_URL } from './config'
@@ -165,8 +164,8 @@ export default function Dashboard() {
         <div className="dashboard-header-left">
           <div className="dashboard-brand">
             <a href="/" aria-label="Ari home">
-              <Logo size={24} />
-              <span>ari</span>
+              <img src="/favicon.svg" width={24} height={24} alt="" />
+              <span>Ari</span>
             </a>
             <ProjectSwitcher />
           </div>
