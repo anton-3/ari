@@ -19,7 +19,7 @@ const FEED_LABELS: Record<FeedSource, string> = {
 }
 
 export default function Dashboard() {
-  const { metrics, logs, topology, vulns, source } = useTelemetry()
+  const { metrics, logs, vulns, agents, source } = useTelemetry()
   const [now, setNow] = useState(() => Date.now())
   const [view, setView] = useState<View | null>(null)
   const [selected, setSelected] = useState<Vuln | null>(null)
@@ -119,7 +119,7 @@ export default function Dashboard() {
       </header>
       <main className="dashboard-main">
         <div className="dashboard-left">
-          <InfrastructureMap topology={topology} users={metrics?.activeUsers} />
+          <InfrastructureMap metrics={metrics} agents={agents} />
           <AriConsole logs={logs} source={source} />
         </div>
         <div className="dashboard-right">
