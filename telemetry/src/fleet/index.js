@@ -55,9 +55,10 @@ function makeLock() {
 }
 
 export class Fleet {
-  constructor({ log = console.log, stateFile = path.join(TELEMETRY_DIR, '.fleet', 'demo-state.json'), ssh = sshRun } = {}) {
+  constructor({ log = console.log, stateFile = path.join(TELEMETRY_DIR, '.fleet', 'demo-state.json'), ssh = sshRun, activationWait = sleep } = {}) {
     this.log = log;
     this.ssh = ssh;
+    this.activationWait = activationWait;
     this.instances = new Map(); // id -> { inst, role, label, publicIp, privateIp }
     this.st = new Map();        // id -> runtime state
     this.links = [];
@@ -781,13 +782,13 @@ export class Fleet {
     });
   }
 
-  // Validates and starts deletion. Throws 404/403/400 before anything is changed.
+  // Reveal warm standby first; hold it out of traffic for the loading animation.
   activateStandby(incidentId = this.incident.id || 'manual') {
     const key = `scale:${incidentId}`;
     if (this.demo.operations[key]) return this.demo.operations[key];
     const node = this.nodesOfRole('app').find(n => n.label === 'web-03' && this.servingState(n.id) === 'standby');
     if (!node || !this._state(node.id).ready) throw httpError(409, 'web-03 standby is not prepared; run demo prepare');
-    const operation = { id: crypto.randomUUID(), kind: 'scale', nodeId: node.id, status: 'activating', progress: 0.15, startedAt: Date.now() };
+    const operation = { id: crypto.randomUUID(), kind: 'scale', nodeId: node.id, status: 'activating', progress: 0, startedAt: Date.now(), durationMs: 10000 };
     this.demo.operations[key] = operation;
     this.demo.serving[node.id] = 'activating';
     this.saveDemo();
@@ -799,11 +800,14 @@ export class Fleet {
     };
     void (async () => {
       try {
-        stage('health-checking', 0.4);
+        stage('health-checking', 0);
         const checked = await this.ssh(node.publicIp,
           'systemctl is-active --quiet myfiat && curl -fsS --max-time 2 http://127.0.0.1:3000/health >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/users/1 >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:3000/api/merchants >/dev/null', { timeoutMs: 7000 });
         if (checked.code !== 0) throw new Error('application/dependency health check failed');
-        stage('joining', 0.75);
+        // Health checks run during the ten-second visual warmup. Do not join
+        // the upstream early, even when this already-warm server checks quickly.
+        await this.activationWait(Math.max(0, operation.startedAt + operation.durationMs - Date.now()));
+        stage('joining', 0.98);
         this.demo.serving[node.id] = 'serving';
         // Hold publication until the proxy confirms the upstream works.
         if (!await this.syncUpstream()) throw new Error('nginx upstream reload failed');

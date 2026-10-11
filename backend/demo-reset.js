@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { api, remote, prepareNextTake, preflight } from './demo.js';
+import { api, remote, prepareNextTake, preflight, verifyStandby } from './demo.js';
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const slug = process.env.GITHUB_REPO || 'anton-3/hackmid2026';
@@ -112,7 +112,8 @@ export class DemoReset {
     catch(e) { if (!/activation is still running/.test(e.message)||Date.now()>deadline) throw e; await d.sleep(500); }
    }
    const s=await d.api('/api/demo/status');
-   if (s.incident.active || s.incident.blockedIps.length || s.standby?.servingState!=='standby') throw new Error('Infra reset did not reach standby');
+   if (s.incident.active || s.incident.blockedIps.length) throw new Error('Infra reset did not clear the incident and bans');
+   verifyStandby(s, (await d.api('/api/fleet')).nodes);
    return 'web-03 is hidden, warm, and outside the serving pool';
   });
   const results=await Promise.allSettled([
@@ -139,7 +140,9 @@ export class DemoReset {
   const failed=results.filter(r=>r.status==='rejected');
   if(failed.length)throw new Error(failed.map(r=>r.reason.message).join('; '));
   await this.step('verify',async()=>{
-   await d.preflight((await d.api('/api/fleet')).nodes);
+   const nodes = (await d.api('/api/fleet')).nodes;
+   verifyStandby(await d.api('/api/demo/status'), nodes);
+   await d.preflight(nodes);
    await d.api('/api/demo/maintenance',{resetting:false});
    return 'Ready for another take';
   });

@@ -227,7 +227,7 @@ export interface FleetIssue {
 export interface FleetNode {
   servingState?: 'standby' | 'activating' | 'serving' | 'failed'
   inUpstream?: boolean
-  activation?: { id: string; status: string; progress: number; startedAt: number; completedAt?: number; error?: string }
+  activation?: { id: string; status: string; progress: number; startedAt: number; durationMs?: number; completedAt?: number; error?: string }
 
   id: string
   label: string

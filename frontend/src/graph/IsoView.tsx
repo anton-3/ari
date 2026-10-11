@@ -1551,15 +1551,26 @@ export default function IsoView(props: Props) {
             const ringR = R + 12
             if (n.activation && (n.activation.status !== 'ready' || Date.now() - (n.activation.completedAt ?? 0) < 1000) || n.status === 'rebooting' || n.status === 'provisioning' || n.status === 'booting') {
               const t = (now - b.bootStart) / 1000
-              const prog = n.activation?.progress ?? (n.status === 'provisioning' ? 0.4 * (1 - Math.exp(-t / 3)) : 0.4 + 0.55 * (1 - Math.exp(-t / 5)))
+              const activation = n.activation
+              const prog = activation
+                ? activation.status === 'ready' ? 1 : activation.status === 'failed' ? activation.progress : clamp((Date.now() - activation.startedAt) / (activation.durationMs ?? 10000), 0, 0.98)
+                : (n.status === 'provisioning' ? 0.4 * (1 - Math.exp(-t / 3)) : 0.4 + 0.55 * (1 - Math.exp(-t / 5)))
               const g = groundEllipse(X, Y, 0, ringR)
               ctx.strokeStyle = 'rgba(40,56,84,0.15)'; ctx.lineWidth = 2.5
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, 0, Math.PI * 2); ctx.stroke()
               const start = -Math.PI / 2 + (!red && !n.activation ? now / 900 : 0)
               const gradient = ctx.createConicGradient(start, g.cx, g.cy)
-              gradient.addColorStop(0, C.red)
-              gradient.addColorStop(0.5, C.amber)
-              gradient.addColorStop(1, '#36bb80')
+              if (activation) {
+                // The hollow outline itself shifts red -> amber -> green as
+                // the arc steadily draws; no spinning or stage-based jumps.
+                const colorAt = (p: number) => p < 0.5 ? mix(C.red, C.amber, p * 2) : mix(C.amber, '#36bb80', (p - 0.5) * 2)
+                gradient.addColorStop(0, colorAt(Math.max(0, prog - 0.12)))
+                gradient.addColorStop(1, colorAt(prog))
+              } else {
+                gradient.addColorStop(0, C.red)
+                gradient.addColorStop(0.5, C.amber)
+                gradient.addColorStop(1, '#36bb80')
+              }
               ctx.strokeStyle = gradient
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, start, start + Math.PI * 2 * prog); ctx.stroke()
             }

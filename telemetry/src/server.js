@@ -183,15 +183,15 @@ app.post('/api/demo/standby', localOnly, async (_req, res) => {
 app.post('/api/demo/reset', localDemoOnly, async (_req, res) => {
   try {
     if (Object.values(fleet.demo.operations).some(o => !['ready', 'failed'].includes(o.status))) throw Object.assign(new Error('activation is still running'), { status: 409 });
-    const ips = [...new Set(fleet.demo.incidents.flatMap(i => i.attackerIps.map(a => a.ip)))];
-    if (ips.length) await fleet.unblockIps({ ips });
+    await fleet.unblockIps({ all: true });
     for (const node of fleet.nodesOfRole('app').filter(n => n.label === 'web-03')) fleet.demo.serving[node.id] = 'standby';
     fleet.demo.operations = {}; fleet.demo.notifications = {}; fleet.demo.incidents = [];
     Object.assign(fleet.incident, { active: false, id: null, since: null, clearedAt: null, attackerIps: [], _trip: 0, _clear: 0, _baseline: 1 });
     const lb = fleet.lbNode();
     if (lb) fleet.issues.set(lb.id, 'ddos', null);
     fleet.saveDemo();
-    await fleet.syncUpstream(); fleet.publish();
+    if (!await fleet.syncUpstream()) throw Object.assign(new Error('Could not remove web-03 from the load balancer upstream'), { status: 502 });
+    fleet.publish();
     res.json({ ok: true });
   } catch (e) { sendErr(res, e); }
 });

@@ -189,6 +189,9 @@ export class CallSession {
     this.interrupt();
     this.current?.controller.abort();
     if (this.current) this.current.aborted = true;
+    // Retained conversation history is not an active transport/call. Keeping
+    // this flag set blocks demo reset and prevents a legitimate reconnect.
+    this.bound = false;
     this.transport = null;
     this.disconnectedAt = Date.now();
   }
@@ -196,6 +199,7 @@ export class CallSession {
   close() {
     if (this.alive) this.onClose?.(this);
     this.alive = false;
+    this.bound = false;
     this.current?.controller.abort();
     this.transport?.dispose();
     this.transport = null;
