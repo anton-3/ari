@@ -14,6 +14,7 @@ log_format arinet '$msec $status $remote_addr "$request" $body_bytes_sent $upstr
 # Rate-limit zone insertion point (http context). A security PR adds a
 # `limit_req_zone ... zone=ari_rl:10m rate=10r/s;` directive on the line below.
     # ari:rate-limit-zone
+    limit_req_zone $binary_remote_addr zone=ari_rl:10m rate=10r/s;
 NG
 
 # Incident-response placeholders: real client IP + IP blocklist. The controller
@@ -36,6 +37,8 @@ server {
   location = /nginx-health { return 200 "ok\n"; }
   location / {
         # ari:rate-limit-apply
+        limit_req zone=ari_rl burst=20 nodelay;
+        limit_req_status 429;
     proxy_pass http://myfiat;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
