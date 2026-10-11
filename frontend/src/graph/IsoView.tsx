@@ -379,9 +379,12 @@ export default function IsoView(props: Props) {
       links.clear()
       return
     }
+    // Compute targets from this snapshot, not the previous scene. Otherwise a
+    // newly arriving node gets a different slot than it would on a fresh load.
+    const targets = new Map<string, { gx: number; gy: number }>()
     const occupied = (gx: number, gy: number, self: string) => {
-      for (const b of bodies.values()) {
-        if (b.id === self) continue
+      for (const [id, b] of targets) {
+        if (id === self) continue
         if (Math.max(Math.abs(b.gx - gx), Math.abs(b.gy - gy)) < GRID * 2.5) return true
       }
       return false
@@ -406,7 +409,8 @@ export default function IsoView(props: Props) {
     }
 
     const seen = new Set<string>()
-    const order = fleet.nodes.slice().sort((a, b) => Number(!!loadPos(b.label)) - Number(!!loadPos(a.label)))
+    const isPinned = (n: FleetNode) => !!loadPos(n.label) || !!bodies.get(n.id)?.pinned
+    const order = fleet.nodes.slice().sort((a, b) => Number(isPinned(b)) - Number(isPinned(a)))
     for (const n of order) {
       let b = bodies.get(n.id)
       if (!b) {
@@ -420,8 +424,9 @@ export default function IsoView(props: Props) {
           if (old.pinned) savePos(n.label, old.gx, old.gy)
         }
       }
+      const p = b?.pinned ? { x: b.gx, y: b.gy, pin: true } : place(n)
+      targets.set(n.id, { gx: p.x, gy: p.y })
       if (!b) {
-        const p = place(n)
         b = {
           id: n.id, node: n, pending: n.id.startsWith('pending-'), x: p.x, y: p.y, gx: p.x, gy: p.y, ox: 0, oy: 0,
           pinned: p.pin, ta: 0, alpha: 0, ex: 0, bootStart: performance.now(), bootPhase: n.status,
@@ -432,13 +437,11 @@ export default function IsoView(props: Props) {
         if (n.activation && n.activation.status !== 'ready') {
           const lb = [...bodies.values()].find(body => body.node.role === 'lb')
           if (lb) { b.x = lb.x + GRID; b.y = lb.y + GRID }
-          const apps = [...bodies.values()].filter(body => body.node.role === 'app').sort((a, z) => a.node.label.localeCompare(z.node.label))
-          apps.forEach((body, i) => {
-            body.gx = shapeOf('app').ax * GRID + (i - (apps.length - 1) / 2) * GRID * 3
-            body.gy = shapeOf('app').ay * GRID
-          })
         }
       }
+      b.gx = p.x
+      b.gy = p.y
+      b.pinned = p.pin
       if (b.bootPhase !== n.status) {
         b.bootPhase = n.status
         b.bootStart = performance.now()
