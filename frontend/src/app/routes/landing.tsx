@@ -20,8 +20,8 @@ export function Landing() {
         <Header />
         <main>
           <Hero />
-          <HowItWorks />
           <LossesChart />
+          <HowItWorks />
           <Simulate />
         </main>
       </div>
