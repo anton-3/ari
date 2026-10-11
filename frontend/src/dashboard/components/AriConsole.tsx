@@ -1,4 +1,4 @@
-import { ARI_PHONE } from '../config'
+import { AriContact } from './AriContact'
 import type { ActivityLine, FeedSource, LogEntry } from '../types'
 import { useEffect, useRef, useState } from 'react'
 
@@ -103,7 +103,7 @@ export function AriConsole({
         <i
           className={`status-square ${source === 'offline' ? 'offline' : ''}`}
         />
-        ari activity
+        Ari activity
       </span>
       <div className="ari-events" aria-live="off">
         {rows.length === 0 && (
@@ -120,8 +120,8 @@ export function AriConsole({
               <time className="mono" dateTime={new Date(line.ts).toISOString()}>
                 {new Date(line.ts).toLocaleTimeString('en-GB')}
               </time>
-              <span className="event-source" title={line.source}>
-                {line.source}
+              <span className="event-source" title={line.source.replace(/\bari\b/gi, 'Ari')}>
+                {line.source.replace(/\bari\b/gi, 'Ari')}
               </span>
               <span className="event-message">
                 <span className="ell" title={line.text}>
@@ -134,14 +134,7 @@ export function AriConsole({
           )
         })}
       </div>
-      <div className="ari-contact">
-        <span>text or call</span>
-        {ARI_PHONE ? (
-          <a href={`tel:${ARI_PHONE}`}>{ARI_PHONE}</a>
-        ) : (
-          <span className="contact-unset">number not configured</span>
-        )}
-      </div>
+      <AriContact />
     </section>
   )
 }

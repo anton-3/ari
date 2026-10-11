@@ -503,14 +503,14 @@ export default function Look() {
           {logLines.length === 0 && (
             <div className="nd-log-line">
               <span className="nd-log-ts">{hhmmss(now)}</span>
-              <span className="nd-log-src">ari</span>
+              <span className="nd-log-src">Ari</span>
               <span className="nd-log-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span>
             </div>
           )}
           {logLines.map((l, i) => (
             <div className={`nd-log-line ${i === logLines.length - 1 ? 'is-head' : ''} ${l.err ? 'is-err' : ''}`} key={`${l.ts}-${i}`}>
               <span className="nd-log-ts">{hhmmss(l.ts)}</span>
-              <span className="nd-log-src">{l.src}</span>
+              <span className="nd-log-src">{l.src === 'ari' ? 'Ari' : l.src}</span>
               <span className="nd-log-msg" title={l.text}>{l.text}</span>
             </div>
           ))}

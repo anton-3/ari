@@ -490,15 +490,15 @@ export default function Look() {
 
           {/* log viewer */}
           <footer className="mx-log" aria-label="log">
-            <div className="mx-log-h"><span>Log</span><span className="mx-dim">ari · fleet · check</span></div>
+            <div className="mx-log-h"><span>Log</span><span className="mx-dim">Ari · fleet · check</span></div>
             <div className="mx-log-body" ref={logRef}>
               {logLines.length === 0 && (
-                <div className="mx-log-line"><span className="mx-log-ts">{hhmmss(now)}</span><span className="mx-log-src">ari</span><span className="mx-log-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span></div>
+                <div className="mx-log-line"><span className="mx-log-ts">{hhmmss(now)}</span><span className="mx-log-src">Ari</span><span className="mx-log-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span></div>
               )}
               {logLines.map((l, i) => (
                 <div className={`mx-log-line ${l.err ? 'is-err' : ''}`} key={`${l.ts}-${i}`}>
                   <span className="mx-log-ts">{hhmmss(l.ts)}</span>
-                  <span className={`mx-log-src mx-log-src--${l.src}`}>{l.src}</span>
+                  <span className={`mx-log-src mx-log-src--${l.src === 'ari' ? 'Ari' : l.src}`}>{l.src === 'ari' ? 'Ari' : l.src}</span>
                   <span className="mx-log-msg" title={l.text}>{l.text}</span>
                 </div>
               ))}

@@ -510,14 +510,14 @@ export default function Graph() {
         {logLines.length === 0 && (
           <div className="iso-log-line">
             <span className="iso-log-ts">{hhmmss(now)}</span>
-            <span className="iso-log-src">ari</span>
+            <span className="iso-log-src">Ari</span>
             <span className="iso-log-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span>
           </div>
         )}
         {logLines.map((l, i) => (
           <div className={`iso-log-line ${i === logLines.length - 1 ? 'is-head' : ''} ${l.err ? 'is-err' : ''}`} key={`${l.ts}-${i}`}>
             <span className="iso-log-ts">{hhmmss(l.ts)}</span>
-            <span className="iso-log-src">{l.src}</span>
+            <span className="iso-log-src">{l.src === 'ari' ? 'Ari' : l.src}</span>
             <span className="iso-log-msg" title={l.text}>{l.text}</span>
           </div>
         ))}

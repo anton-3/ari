@@ -482,7 +482,7 @@ export default function Look() {
         </div>
 
         {/* ---- logs panel ---- */}
-        <Panel title="Logs" className="gf-logs" right={<span className="gf-panel-meta">ari · fleet · check</span>}>
+        <Panel title="Logs" className="gf-logs" right={<span className="gf-panel-meta">Ari · fleet · check</span>}>
           <div className="gf-log-body" ref={logRef}>
             {logLines.length === 0 && (
               <div className="gf-log-row"><i className="lv" /><span className="ts">{logTs(now)}</span><span className="msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span></div>
@@ -492,7 +492,7 @@ export default function Look() {
                 <i className={`lv lv--${l.err ? 'error' : l.src}`} />
                 <span className="ts">{logTs(l.ts)}</span>
                 <span className="lvl">{l.err ? 'error' : 'info'}</span>
-                <span className="src">{l.src}</span>
+                <span className="src">{l.src === 'ari' ? 'Ari' : l.src}</span>
                 <span className="msg" title={l.text}>{l.text}</span>
               </div>
             ))}

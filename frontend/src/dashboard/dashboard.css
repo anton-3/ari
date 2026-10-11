@@ -748,16 +748,61 @@
   color: var(--dim);
   white-space: nowrap;
 }
-.ari-contact > a {
+.ari-qr-trigger {
+  display: block;
+  width: 80px;
+  height: 80px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: white;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.ari-qr-trigger:hover {
+  box-shadow: 0 0 0 3px var(--accent);
+}
+.ari-qr-trigger:focus-visible,
+.ari-qr-large:focus-visible,
+.ari-qr-phone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.ari-qr-trigger svg {
+  display: block;
+}
+.dashboard-dialog.ari-qr-dialog {
+  width: min(400px, calc(100% - 32px));
+  margin: auto;
+  text-align: center;
+  white-space: normal;
+}
+.ari-qr-dialog p {
+  margin: 0 0 20px;
+  color: var(--muted);
   font-size: 14px;
-  color: var(--fg-2);
+}
+.ari-qr-large {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: white;
+}
+.ari-qr-large svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ari-qr-phone {
+  display: inline-block;
+  margin-top: 20px;
+  color: var(--fg);
+  font-size: 20px;
   font-variant-numeric: tabular-nums;
 }
-.ari-contact > a:hover {
+.ari-qr-phone:hover {
   color: var(--accent);
-}
-.contact-unset {
-  font-size: 11px;
 }
 .dashboard-dialog {
   width: min(640px, calc(100% - 32px));
@@ -917,11 +962,8 @@
   .dashboard-nav {
     gap: 14px;
   }
-  .ari-contact {
-    display: none;
-  }
   .ari-console {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 20px;
   }
 }
@@ -1005,6 +1047,9 @@
   .ari-console {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
+  }
+  .ari-contact {
+    align-items: flex-start;
   }
   .ari-event {
     grid-template-columns: 58px 44px minmax(0, 1fr);
