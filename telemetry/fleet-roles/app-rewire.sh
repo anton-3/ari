@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Re-point a running app node at the db/cache in /etc/ari-net/env (updated by
-# the controller), sync the code, restart AcmePay only, and verify /health.
+# the controller), sync the code, restart MyFiat only, and verify /health.
 set -euo pipefail
 set -a; . /etc/ari-net/env; set +a
 . "$(dirname "$0")/app-lib.sh"

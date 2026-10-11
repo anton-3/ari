@@ -1,13 +1,13 @@
 // Traffic simulation engine for Ari telemetry.
 // Produces realistic fake metrics + logs. In "synthetic" mode (default) it
 // NEVER sends real network traffic anywhere. In optional "live" mode it may make
-// benign HTTP GETs to the AcmePay target app to sample real-ish latency, but
+// benign HTTP GETs to the MyFiat target app to sample real-ish latency, but
 // never floods.
 
 const SERIES_MAX = 300;   // ~5 min @ 1s
 const LOG_MAX = 500;
 
-// ---- believable request paths for an AcmePay-style app ----
+// ---- believable request paths for an MyFiat-style app ----
 const NORMAL_PATHS = [
   ['GET', '/'],
   ['GET', '/dashboard'],
@@ -89,8 +89,8 @@ export class Simulator {
         { id: 'internet', label: 'Internet', type: 'edge', status: 'healthy' },
         { id: 'edge', label: 'WAF / Edge', type: 'firewall', status: 'healthy' },
         { id: 'lb', label: 'Load Balancer', type: 'lb', status: 'healthy' },
-        { id: 'app-1', label: 'AcmePay App 1', type: 'app', status: 'healthy' },
-        { id: 'app-2', label: 'AcmePay App 2', type: 'app', status: 'healthy' },
+        { id: 'app-1', label: 'MyFiat App 1', type: 'app', status: 'healthy' },
+        { id: 'app-2', label: 'MyFiat App 2', type: 'app', status: 'healthy' },
         { id: 'db', label: 'Postgres (primary)', type: 'db', status: 'healthy' },
         { id: 'cache', label: 'Redis Cache', type: 'cache', status: 'healthy' },
       ],
@@ -115,11 +115,11 @@ export class Simulator {
   _seedVulns() {
     const now = Date.now();
     this.vulns = [
-      { id: 'VULN-1001', severity: 'critical', title: 'SQL injection in transaction search', project: 'AcmePay', endpoint: 'GET /api/transactions', status: 'open', discoveredAt: new Date(now - 3600e3 * 6).toISOString() },
-      { id: 'VULN-1002', severity: 'high', title: 'Missing rate limiting on login', project: 'AcmePay', endpoint: 'POST /api/login', status: 'open', discoveredAt: new Date(now - 3600e3 * 3).toISOString() },
-      { id: 'VULN-1003', severity: 'medium', title: 'Verbose stack traces leaked on 500', project: 'AcmePay', endpoint: 'GET /api/payments', status: 'open', discoveredAt: new Date(now - 3600e3 * 2).toISOString() },
-      { id: 'VULN-1004', severity: 'low', title: 'Cookie missing SameSite attribute', project: 'AcmePay', endpoint: 'ALL', status: 'remediated', discoveredAt: new Date(now - 3600e3 * 24).toISOString() },
-      { id: 'VULN-1005', severity: 'high', title: 'Outdated TLS ciphers accepted at edge', project: 'AcmePay', endpoint: 'WAF / Edge', status: 'remediated', discoveredAt: new Date(now - 3600e3 * 30).toISOString() },
+      { id: 'VULN-1001', severity: 'critical', title: 'SQL injection in transaction search', project: 'MyFiat', endpoint: 'GET /api/transactions', status: 'open', discoveredAt: new Date(now - 3600e3 * 6).toISOString() },
+      { id: 'VULN-1002', severity: 'high', title: 'Missing rate limiting on login', project: 'MyFiat', endpoint: 'POST /api/login', status: 'open', discoveredAt: new Date(now - 3600e3 * 3).toISOString() },
+      { id: 'VULN-1003', severity: 'medium', title: 'Verbose stack traces leaked on 500', project: 'MyFiat', endpoint: 'GET /api/payments', status: 'open', discoveredAt: new Date(now - 3600e3 * 2).toISOString() },
+      { id: 'VULN-1004', severity: 'low', title: 'Cookie missing SameSite attribute', project: 'MyFiat', endpoint: 'ALL', status: 'remediated', discoveredAt: new Date(now - 3600e3 * 24).toISOString() },
+      { id: 'VULN-1005', severity: 'high', title: 'Outdated TLS ciphers accepted at edge', project: 'MyFiat', endpoint: 'WAF / Edge', status: 'remediated', discoveredAt: new Date(now - 3600e3 * 30).toISOString() },
     ];
   }
   upsertVuln(v) {
@@ -130,7 +130,7 @@ export class Simulator {
       id,
       severity: v.severity || existing?.severity || 'medium',
       title: v.title || existing?.title || 'Untitled finding',
-      project: v.project || existing?.project || 'AcmePay',
+      project: v.project || existing?.project || 'MyFiat',
       endpoint: v.endpoint || existing?.endpoint || 'ALL',
       status: v.status || existing?.status || 'open',
       discoveredAt: existing?.discoveredAt || v.discoveredAt || new Date().toISOString(),

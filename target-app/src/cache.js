@@ -1,5 +1,5 @@
 /*
- * AcmePay - optional Redis cache (enabled only when REDIS_URL is set).
+ * MyFiat - optional Redis cache (enabled only when REDIS_URL is set).
  * Two small uses: a per-endpoint request counter, and a short-TTL cache for
  * GET /api/merchants. With no REDIS_URL, or while Redis is unreachable, every
  * helper is a no-op passthrough: the cache can never block or fail a request.
@@ -20,7 +20,7 @@ if (process.env.REDIS_URL) {
     },
   });
   client.on('error', (err) => {
-    if (Date.now() - lastErrLog > 30000) { lastErrLog = Date.now(); console.error('[acmepay] redis error:', err.message); }
+    if (Date.now() - lastErrLog > 30000) { lastErrLog = Date.now(); console.error('[myfiat] redis error:', err.message); }
   });
   client.connect().catch(() => {});
 }
@@ -30,10 +30,10 @@ const ready = () => client && client.isReady;
 // Resolve `p`, or `fallback` after `ms` (a hung socket must not hang a request).
 const within = (p, ms, fallback) => Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]);
 
-// Fire-and-forget request counter, e.g. acmepay:hits:GET /api/merchants
+// Fire-and-forget request counter, e.g. myfiat:hits:GET /api/merchants
 export function countRequest(method, route) {
   if (!ready()) return;
-  client.hIncrBy('acmepay:hits', `${method} ${route}`, 1).catch(() => {});
+  client.hIncrBy('myfiat:hits', `${method} ${route}`, 1).catch(() => {});
 }
 
 // Return cached JSON for `key`, else compute via `fn`, store for `ttlSec`.

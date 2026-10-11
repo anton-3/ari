@@ -27,7 +27,7 @@ export default function Dashboard() {
   const dialog = useRef<HTMLDialogElement>(null)
   const currentFinding =
     vulns.find((finding) => finding.id === selected?.id) ?? selected
-  const project = vulns[0]?.project ?? 'AcmePay'
+  const project = vulns[0]?.project ?? 'MyFiat'
   const issues = logs.filter((log) =>
     ['warn', 'error', 'critical'].includes(log.level),
   )
@@ -267,7 +267,7 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="dialog-note">
-              The local telemetry service simulates traffic and samples AcmePay
+              The local telemetry service simulates traffic and samples MyFiat
               latency. Findings and node health come from its API.
             </p>
           </>

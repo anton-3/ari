@@ -1,4 +1,4 @@
-# AcmePay — Security Notes (Answer Key)
+# MyFiat — Security Notes (Answer Key)
 
 > ⚠️ **This is a controlled demo application.** The vulnerabilities below were
 > planted **intentionally** so the "Ari" autonomous security engineer can
@@ -32,10 +32,10 @@ are shared.
   ```
 - **Fix:** Use a parameterized query (bound `?` placeholders). A complete fixed
   implementation already exists in the same handler at lines **108–122** and is
-  activated by setting `ACMEPAY_SAFE_SEARCH=1` (see `config.safeSearch` in
+  activated by setting `MYFIAT_SAFE_SEARCH=1` (see `config.safeSearch` in
   `src/config.js` line **30**). To permanently fix, delete the concatenated
   branch (lines 124–135) and always run the parameterized version.
-- **Verify fix:** `ACMEPAY_SAFE_SEARCH=1 npm start`, then the `' OR '1'='1`
+- **Verify fix:** `MYFIAT_SAFE_SEARCH=1 npm start`, then the `' OR '1'='1`
   payload returns `count: 0` (treated as a literal search term).
 
 ---
@@ -104,6 +104,6 @@ are shared.
 
 - **Weak password hashing:** `src/db.js` line **33** stores passwords as plain
   **MD5** (unsalted). Seeded accounts use well-known weak passwords
-  (`admin@acmepay.io` / `admin123`). Fix: use bcrypt/scrypt/argon2 with per-user salt.
+  (`admin@myfiat.io` / `admin123`). Fix: use bcrypt/scrypt/argon2 with per-user salt.
 - **No rate limiting** on `POST /api/login` — brute-force friendly.
 - **CORS / security headers** absent (no `helmet`).

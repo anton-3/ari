@@ -1,5 +1,5 @@
 /*
- * AcmePay - seed script. Populates the DB (SQLite, or Postgres when DATABASE_URL
+ * MyFiat - seed script. Populates the DB (SQLite, or Postgres when DATABASE_URL
  * is set) with realistic sample data:
  *   ~20 users, a handful of merchants, ~50 transactions.
  * Idempotent-ish: pass --force to wipe and reseed.
@@ -52,7 +52,7 @@ async function reseed(force) {
   const userIds = [];
   // Known admin account for the demo (weak, well-known password).
   userIds.push((await insUser([
-    'admin@acmepay.io', 'Dana Admin', md5('admin123'), 'admin',
+    'admin@myfiat.io', 'Dana Admin', md5('admin123'), 'admin',
     '0007', '4242', 500000, iso('2023-02-01'),
   ])).lastInsertRowid);
 

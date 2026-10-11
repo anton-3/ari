@@ -1,10 +1,10 @@
-# AcmePay
+# MyFiat
 
 A small, production-looking **payments / checkout REST API** for a fictional
 fintech. Node.js + Express + SQLite (`better-sqlite3`).
 
 > ⚠️ **DEMO SECURITY TARGET — intentional vulnerabilities inside.**
-> AcmePay is the sample application watched over by **Ari**, an autonomous AI
+> MyFiat is the sample application watched over by **Ari**, an autonomous AI
 > security engineer, in a controlled hackathon demo. It **deliberately** contains
 > security weaknesses for Ari to discover and fix. **Do not** run it with real
 > data or expose it to the public internet. The full list of planted issues
@@ -15,7 +15,7 @@ fintech. Node.js + Express + SQLite (`better-sqlite3`).
 ```bash
 cd target-app
 npm install          # compiles better-sqlite3 native addon
-npm run seed         # create + populate data/acmepay.db (20 users, 7 merchants, ~52 txns)
+npm run seed         # create + populate data/myfiat.db (20 users, 7 merchants, ~52 txns)
 npm start            # listens on http://localhost:8070
 ```
 
@@ -27,8 +27,8 @@ No API keys or external services are required to run it.
 |-----------------------|----------------|-----------------------------------------------------|
 | `PORT`                | `8070`         | HTTP port                                           |
 | `NODE_ENV`            | `production`   | Environment label                                   |
-| `ACMEPAY_DB`          | `data/acmepay.db` | SQLite file path                                 |
-| `ACMEPAY_SAFE_SEARCH` | *(unset)*      | `1` → use the **fixed** parameterized search (kills SQLi #1) |
+| `MYFIAT_DB`          | `data/myfiat.db` | SQLite file path                                 |
+| `MYFIAT_SAFE_SEARCH` | *(unset)*      | `1` → use the **fixed** parameterized search (kills SQLi #1) |
 
 ## Endpoints
 
@@ -47,7 +47,7 @@ No API keys or external services are required to run it.
 ```bash
 curl localhost:8070/health
 curl -X POST localhost:8070/api/login -H 'Content-Type: application/json' \
-  -d '{"email":"admin@acmepay.io","password":"admin123"}'
+  -d '{"email":"admin@myfiat.io","password":"admin123"}'
 curl localhost:8070/api/users/1
 curl 'localhost:8070/api/transactions?user=James&status=succeeded'
 curl -X POST localhost:8070/api/payments -H 'Content-Type: application/json' \
@@ -55,7 +55,7 @@ curl -X POST localhost:8070/api/payments -H 'Content-Type: application/json' \
 curl localhost:8070/api/merchants
 ```
 
-Seeded demo login: `admin@acmepay.io` / `admin123`.
+Seeded demo login: `admin@myfiat.io` / `admin123`.
 
 ## Project layout
 

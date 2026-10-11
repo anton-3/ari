@@ -1,4 +1,4 @@
-# AcmePay - DEMO payments API (controlled security target).
+# MyFiat - DEMO payments API (controlled security target).
 # Multi-stage not needed; better-sqlite3 needs build tools to compile.
 FROM node:20-bookworm-slim
 

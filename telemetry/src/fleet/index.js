@@ -1,4 +1,4 @@
-// ari-net fleet controller: a real fleet of Linode nanodes running AcmePay
+// ari-net fleet controller: a real fleet of Linode nanodes running MyFiat
 // (lb -> app x N -> db + cache, plus traffic / worker), provisioned over SSH,
 // sampled every ~2s over SSH, and exposed as a live topology.
 //
@@ -21,8 +21,8 @@ const REPO_ROOT = path.resolve(TELEMETRY_DIR, '..');
 
 export const ROLES = [
   { role: 'lb', label: 'Load balancer', description: 'nginx on :80, proxies to every app node over the private network', singleton: true },
-  { role: 'app', label: 'AcmePay app', description: 'AcmePay payments API (Node 20) on :3000, joins the lb automatically', singleton: false },
-  { role: 'db', label: 'PostgreSQL', description: 'PostgreSQL on the private interface (:5432), AcmePay schema + seed', singleton: true },
+  { role: 'app', label: 'MyFiat app', description: 'MyFiat payments API (Node 20) on :3000, joins the lb automatically', singleton: false },
+  { role: 'db', label: 'PostgreSQL', description: 'PostgreSQL on the private interface (:5432), MyFiat schema + seed', singleton: true },
   { role: 'cache', label: 'Redis cache', description: 'Redis on the private interface (:6379); request counters + merchants cache', singleton: false },
   { role: 'traffic', label: 'Traffic generator', description: 'Steady realistic request mix to the lb (normal / surge)', singleton: false },
   { role: 'worker', label: 'Settlement worker', description: 'Background job that polls Postgres every few seconds', singleton: false },
@@ -533,7 +533,7 @@ export class Fleet {
       const down = host && !this._serviceAt(host, port);
       this.issues.set(id, key, down ? {
         severity: 'high', kind: 'dependency-missing', title: `Configured ${what} unreachable`,
-        detail: `AcmePay points at ${what} ${host}:${port}, which is not a running fleet node listening on :${port}`,
+        detail: `MyFiat points at ${what} ${host}:${port}, which is not a running fleet node listening on :${port}`,
         source: 'controller (env + fleet samples)',
       } : null);
     };

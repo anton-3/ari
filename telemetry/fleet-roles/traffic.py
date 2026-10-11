@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ari-net load generator: a light, realistic AcmePay request mix sent to the lb.
+"""ari-net load generator: a light, realistic MyFiat request mix sent to the lb.
 
 Uses persistent keep-alive connections (one per worker thread) so the traffic
 shows up as steady, long-lived TCP flows on the topology map.
@@ -39,7 +39,7 @@ def next_request():
         return "GET", "/api/transactions?user=" + q, None
     if r < 0.65:
         ok = random.random() < 0.8
-        body = {"email": "admin@acmepay.io", "password": "admin123" if ok else "wrong-password"}
+        body = {"email": "admin@myfiat.io", "password": "admin123" if ok else "wrong-password"}
         return "POST", "/api/login", body
     if r < 0.80:
         body = {"user_id": random.randint(2, 20), "merchant_id": random.randint(1, 7),

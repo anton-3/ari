@@ -18,7 +18,7 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a)
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v)
 
 const ROLES: FleetRoleInfo[] = [
-  { role: 'app', label: 'App server', description: 'AcmePay Node.js app behind the load balancer', addable: true },
+  { role: 'app', label: 'App server', description: 'MyFiat Node.js app behind the load balancer', addable: true },
   { role: 'worker', label: 'Worker', description: 'Background job runner (postgres + redis)', addable: true },
   { role: 'cache', label: 'Redis cache', description: 'Session/cache store (singleton)', addable: false },
   { role: 'db', label: 'Postgres', description: 'Primary database (singleton)', addable: false },
@@ -34,7 +34,7 @@ function procs(role: string): FleetProcess[] {
   const ssh = { name: 'sshd', pid: 612, ports: [22] }
   switch (role) {
     case 'lb': return [{ name: 'nginx', pid: 901, ports: [80, 443] }, ssh]
-    case 'app': return [{ name: 'node acmepay', pid: 1204, ports: [3000] }, { name: 'pm2', pid: 1188, ports: [] }, ssh]
+    case 'app': return [{ name: 'node myfiat', pid: 1204, ports: [3000] }, { name: 'pm2', pid: 1188, ports: [] }, ssh]
     case 'worker': return [{ name: 'node worker', pid: 1310, ports: [] }, ssh]
     case 'db': return [{ name: 'postgres', pid: 845, ports: [5432] }, ssh]
     case 'cache': return [{ name: 'redis-server', pid: 772, ports: [6379] }, ssh]
@@ -211,7 +211,7 @@ export class MockFleet {
       const keep = (i: Omit<FleetIssue, 'since'>) => out.push({ ...i, since: prev.get(i.id)?.since ?? now })
       if (n.status === 'offline') keep({ id: `${n.id}:unreachable`, severity: 'critical', kind: 'unreachable', title: 'Node unreachable', detail: `no response from ${n.privateIp}:22 for 3 consecutive probes`, source: 'collector/ping' })
       if (n.status === 'running' && n.cpu > 0.9) keep({ id: `${n.id}:cpu`, severity: 'high', kind: 'cpu', title: `CPU ${Math.round(n.cpu * 100)}%`, detail: `load1 ${n.load1} on ${n.type}`, source: 'collector/metrics' })
-      if (n.label === 'app-1' && n.status === 'running') keep({ id: `${n.id}:sqli`, severity: 'high', kind: 'vuln', title: 'SQL injection in GET /api/transactions', detail: 'target-app/src/server.js: unparameterized search query', source: 'code/AcmePay SECURITY-NOTES', file: 'target-app/src/server.js', symbolId: 'server.js#GET /api/transactions' })
+      if (n.label === 'app-1' && n.status === 'running') keep({ id: `${n.id}:sqli`, severity: 'high', kind: 'vuln', title: 'SQL injection in GET /api/transactions', detail: 'target-app/src/server.js: unparameterized search query', source: 'code/MyFiat SECURITY-NOTES', file: 'target-app/src/server.js', symbolId: 'server.js#GET /api/transactions' })
       if (n.role === 'lb' && surge) keep({ id: `${n.id}:5xx`, severity: 'medium', kind: 'nginx-5xx', title: 'nginx 5xx rate 3.4%', detail: 'upstream timeouts under surge load', source: 'collector/nginx' })
       if (n.role === 'cache' && n.status === 'running') keep({ id: `${n.id}:updates`, severity: 'low', kind: 'updates', title: '12 pending security updates', detail: 'apt list --upgradable (openssl, libc6, …)', source: 'collector/apt' })
       n.issues = out

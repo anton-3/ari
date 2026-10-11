@@ -1,6 +1,6 @@
 /*
  * =============================================================================
- *  AcmePay - payments / checkout API server
+ *  MyFiat - payments / checkout API server
  * =============================================================================
  *  ⚠️  DEMO / CONTROLLED SECURITY TARGET  ⚠️
  *  This application DELIBERATELY contains security vulnerabilities so that the
@@ -25,7 +25,7 @@ const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 const db = await getDb();
 await initSchema(db);
 if (!(await isSeeded(db))) {
-  console.warn('[acmepay] database is empty - run "npm run seed" to populate sample data.');
+  console.warn('[myfiat] database is empty - run "npm run seed" to populate sample data.');
 }
 
 const app = express();
@@ -46,7 +46,7 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'acmepay', version: '1.2.0', time: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'myfiat', version: '1.2.0', time: new Date().toISOString() });
 });
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ app.get('/api/users/:id', async (req, res, next) => {
 // (e.g. users.password_md5). See SECURITY-NOTES.md issue #1.
 //
 // A safe, parameterized implementation is provided below and is selected when
-// ACMEPAY_SAFE_SEARCH=1 (config.safeSearch). That is the "fix".
+// MYFIAT_SAFE_SEARCH=1 (config.safeSearch). That is the "fix".
 app.get('/api/transactions', async (req, res) => {
   const userTerm = req.query.user ?? '';
   const statusTerm = req.query.status ?? '';
@@ -174,7 +174,7 @@ app.post('/api/payments', async (req, res) => {
 app.get('/api/merchants', async (_req, res, next) => {
   try {
     // Short-TTL Redis cache when REDIS_URL is set; straight to the db otherwise.
-    const rows = await cached('acmepay:merchants', 5, () =>
+    const rows = await cached('myfiat:merchants', 5, () =>
       db.all('SELECT id, name, category, country, created_at FROM merchants ORDER BY name'));
     res.json({ count: rows.length, merchants: rows });
   } catch (err) { next(err); }
@@ -186,7 +186,7 @@ app.use((err, _req, res, _next) => {
 });
 
 const server = app.listen(config.port, () => {
-  console.log(`[acmepay] listening on http://0.0.0.0:${config.port} (env=${config.env}, safeSearch=${config.safeSearch})`);
+  console.log(`[myfiat] listening on http://0.0.0.0:${config.port} (env=${config.env}, safeSearch=${config.safeSearch})`);
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));

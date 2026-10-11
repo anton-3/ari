@@ -92,7 +92,7 @@ export function generateReasoning({ swarm = {}, metrics = {} } = {}) {
   if (!candidates.length) {
     candidates.push(
       `All quiet. Monitoring ${metrics.rps || 0} req/s with no active agents — ready to spin up a scan on request.`,
-      `Baseline traffic, no agents out. I'm watching the AcmePay service and standing ready.`,
+      `Baseline traffic, no agents out. I'm watching the MyFiat service and standing ready.`,
     );
   }
 

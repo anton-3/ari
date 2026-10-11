@@ -7,7 +7,7 @@
 //     on 3000/5432/6379 (only our own ari-net nodes, only those ports);
 //   - SSH brute force: failed logins in the last 10 min from journalctl;
 //   - pending security updates (apt, every 10 min);
-//   - known AcmePay vulnerabilities, by statically reading the deployed code.
+//   - known MyFiat vulnerabilities, by statically reading the deployed code.
 // An issue keeps a stable id while its condition holds and clears when it stops.
 import net from 'node:net';
 import { sshRun } from './ssh.js';
@@ -178,9 +178,9 @@ export async function checkUpdates(store, node) {
   return { count: pkgs.length, important };
 }
 
-// ---- known AcmePay vulnerabilities in the DEPLOYED code (static read) ----
+// ---- known MyFiat vulnerabilities in the DEPLOYED code (static read) ----
 // Severity per target-app/SECURITY-NOTES.md. Paths are repo-relative so they
-// line up with repograph/codemap ids; the node path is /opt/acmepay/<rel>.
+// line up with repograph/codemap ids; the node path is /opt/myfiat/<rel>.
 const CODE_RULES = [
   { key: 'SQLI', severity: 'critical', title: 'SQL injection in transaction search (string-concatenated SQL)',
     rel: 'src/server.js', re: /LIKE '%\$\{|= '\$\{/, endpoint: 'GET /api/transactions' },
@@ -197,7 +197,7 @@ const CODE_RULES = [
 export async function checkCode(store, node) {
   if (node.role !== 'app') return null;
   const files = [...new Set(CODE_RULES.map((r) => r.rel))];
-  const r = await sshRun(node.publicIp, `cd /opt/acmepay && grep -nH '' ${files.join(' ')}`, { timeoutMs: 15000 });
+  const r = await sshRun(node.publicIp, `cd /opt/myfiat && grep -nH '' ${files.join(' ')}`, { timeoutMs: 15000 });
   if (r.code !== 0) return null;
   const byFile = new Map();
   for (const line of r.stdout.split('\n')) {
@@ -216,7 +216,7 @@ export async function checkCode(store, node) {
       const file = `target-app/${rule.rel}`;
       const issue = {
         severity: rule.severity, kind: 'app-vuln', title: rule.title,
-        detail: `${file}:${hits.map((h) => h.n).join(',')} (deployed at /opt/acmepay/${rule.rel}) - ${rule.endpoint}`,
+        detail: `${file}:${hits.map((h) => h.n).join(',')} (deployed at /opt/myfiat/${rule.rel}) - ${rule.endpoint}`,
         source: 'code-scan', file, line: hits[0].n, endpoint: rule.endpoint,
         // innermost codemap symbol containing the line, so the badge lands on it
         symbolId: symbolAt(file, hits[0].n),

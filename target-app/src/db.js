@@ -1,5 +1,5 @@
 /*
- * AcmePay - database access layer.
+ * MyFiat - database access layer.
  * SQLite via better-sqlite3 by default; PostgreSQL (node-postgres) when
  * DATABASE_URL is set (used by the multi-node Linode fleet).
  * DEMO security target. See SECURITY-NOTES.md.
@@ -92,7 +92,7 @@ async function openPostgres() {
   const { default: pg } = await import('pg');
   // Long-lived pooled connections (keeps app->db traffic on steady sockets).
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 4, idleTimeoutMillis: 0 });
-  pool.on('error', (err) => console.error('[acmepay] pg pool error:', err.message));
+  pool.on('error', (err) => console.error('[myfiat] pg pool error:', err.message));
   const q = (sql, params = []) => pool.query(toPg(sql), params);
   return {
     dialect,
