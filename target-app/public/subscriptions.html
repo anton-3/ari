@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Subscriptions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar"><div><h1>Subscriptions</h1><div class="sub">Recurring charges we spotted on your accounts</div></div></header>
+      <main class="content">
+        <div class="sub-summary" id="summary">
+          <div class="skel skel-card" style="height:90px"></div><div class="skel skel-card" style="height:90px"></div><div class="skel skel-card" style="height:90px"></div>
+        </div>
+        <section class="card">
+          <div class="card__head"><h3>Active &amp; recent</h3><span class="muted" id="subcount" style="font-size:.84rem"></span></div>
+          <div class="sublist" id="sublist"><div class="spinner">Loading subscriptions…</div></div>
+        </section>
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) { renderShell('/subscriptions.html', session); load(); }
+
+    const perMonth = s => s.cadence === 'yearly' ? s.amount_cents / 12 : s.cadence === 'quarterly' ? s.amount_cents / 3 : s.cadence === 'weekly' ? s.amount_cents * 4.33 : s.amount_cents;
+
+    async function load() {
+      const { ok, body } = await api('/api/subscriptions');
+      const list = document.getElementById('sublist');
+      const subs = Array.isArray(body) ? body : body?.subscriptions || [];
+      if (!ok) { list.innerHTML = `<div class="empty">${ICONS.repeat}<div>Could not load subscriptions.</div></div>`; return; }
+      if (!subs.length) { list.innerHTML = `<div class="empty">${ICONS.repeat}<div>No recurring charges found.</div></div>`; document.getElementById('summary').innerHTML = ''; return; }
+
+      const active = subs.filter(s => s.status === 'active');
+      const monthly = Number.isFinite(body?.monthly_total_cents) ? body.monthly_total_cents : Math.round(active.reduce((t, s) => t + perMonth(s), 0));
+      const next = active.slice().sort((a, b) => new Date(a.next_charge_at) - new Date(b.next_charge_at))[0];
+      document.getElementById('summary').innerHTML = `
+        <div class="stat"><div class="k">Monthly total</div><div class="v tnum">${fmtMoney(monthly)}<small> /mo</small></div></div>
+        <div class="stat"><div class="k">Active subscriptions</div><div class="v tnum">${active.length}</div></div>
+        <div class="stat"><div class="k">Next charge</div><div class="v" style="font-size:1.25rem">${next ? esc(next.merchant_name) : '—'}</div><div class="k" style="margin-top:4px">${next ? fmtDue(next.next_charge_at) + ' · ' + fmtMoney(next.amount_cents) : ''}</div></div>`;
+      document.getElementById('subcount').textContent = `${subs.length} total`;
+
+      list.innerHTML = subs.map(subRow).join('');
+      list.querySelectorAll('[data-cancel]').forEach(b => b.addEventListener('click', () => cancelSub(b.dataset.cancel, b)));
+    }
+
+    function subRow(s) {
+      const cancelled = s.status !== 'active';
+      return `<div class="subrow">
+        <div class="logo" style="background:${brandColor(s.merchant_name)}">${esc(initials(s.merchant_name))}</div>
+        <div class="nm"><b>${esc(s.merchant_name)}</b><span>${esc(s.category || 'Subscription')} · ${esc(s.cadence || 'monthly')}</span></div>
+        <div class="amt tnum">${fmtMoney(s.amount_cents)}<span>${cancelled ? 'cancelled' : fmtDue(s.next_charge_at)}</span></div>
+        <div>${cancelled ? `<span class="pill cancelled">cancelled</span>` : `<button class="btn btn--danger btn--sm" data-cancel="${s.id}">Cancel</button>`}</div>
+      </div>`;
+    }
+
+    async function cancelSub(id, btn) {
+      if (!confirm('Cancel this subscription? MyFiat will stop future charges.')) return;
+      btn.disabled = true; btn.textContent = 'Cancelling…';
+      const { ok, body } = await api(`/api/subscriptions/${id}/cancel`, { method: 'POST' });
+      if (ok) { toast('Subscription cancelled.'); load(); }
+      else { btn.disabled = false; btn.textContent = 'Cancel'; toast(body?.error ? `Failed: ${body.error}` : 'Could not cancel.', true); }
+    }
+  </script>
+</body>
+</html>

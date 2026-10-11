@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Cards</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar"><div><h1>Cards</h1><div class="sub">Manage your physical and virtual cards</div></div></header>
+      <main class="content">
+        <div class="cardwall" id="cardwall">
+          <div class="skel" style="aspect-ratio:1.586;border-radius:18px"></div>
+          <div class="skel" style="aspect-ratio:1.586;border-radius:18px"></div>
+        </div>
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) { renderShell('/cards.html', session); load(); }
+
+    const VISUALS = ['v-emerald', 'v-ink', 'v-sand'];
+    function cardState(c) {
+      const exp = new Date(c.exp_year, c.exp_month, 0);
+      const days = Math.ceil((exp - Date.now()) / 86400000);
+      if (c.status === 'expired' || days < 0) return { status: 'expired', expiring: false, days };
+      return { status: c.status, expiring: days <= 90, days };
+    }
+
+    async function load() {
+      const { ok, body } = await api('/api/cards');
+      const wall = document.getElementById('cardwall');
+      const cards = Array.isArray(body) ? body : body?.cards || [];
+      if (!ok) { wall.innerHTML = `<div class="card empty">${ICONS.card}<div>Could not load your cards.</div></div>`; return; }
+      if (!cards.length) { wall.innerHTML = `<div class="card empty">${ICONS.card}<div>You have no cards yet.</div></div>`; return; }
+      wall.innerHTML = cards.map((c, i) => cardBlock(c, i)).join('');
+      wall.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => doAction(b.dataset.id, b.dataset.act, b)));
+    }
+
+    function cardBlock(c, i) {
+      const st = cardState(c);
+      const vis = c.visual || VISUALS[i % VISUALS.length];
+      const num = `•••• •••• •••• ${esc(c.last4)}`;
+      const exp = `${String(c.exp_month).padStart(2, '0')}/${String(c.exp_year).slice(-2)}`;
+      const net = NET_ICON[(c.brand || '').toLowerCase()] || `<span class="cc-net" style="font-style:normal">${esc((c.brand || '').toUpperCase())}</span>`;
+      const badge = st.status === 'frozen' ? '<div class="cc-badge frozen">❄ Frozen</div>'
+        : st.status === 'expired' ? '<div class="cc-badge expired">Expired</div>'
+        : st.expiring ? '<div class="cc-badge">Expiring soon</div>' : '';
+
+      let ctl = '';
+      if (st.status === 'frozen') ctl += `<button class="btn btn--primary btn--sm" data-id="${c.id}" data-act="unfreeze">Unfreeze</button>`;
+      else if (st.status !== 'expired') ctl += `<button class="btn btn--ghost btn--sm" data-id="${c.id}" data-act="freeze">${ICONS.snow} Freeze</button>`;
+      if (st.status === 'expired' || st.expiring) ctl += `<button class="btn btn--primary btn--sm" data-id="${c.id}" data-act="renew">Renew card</button>`;
+
+      return `<div class="cardblock">
+        <div class="ccard ${vis} ${st.status === 'frozen' ? 'frozen' : ''} ${st.status === 'expired' ? 'expired' : ''}" id="cc-${c.id}">
+          ${badge}
+          <div class="cc-top"><div><div class="cc-brand">MyFiat</div><div class="cc-kind">${esc(c.kind || c.brand || 'Card')}</div></div><div class="cc-chip"></div></div>
+          <div class="cc-num">${num}</div>
+          <div class="cc-foot">
+            <div><div class="k">Card holder</div><div class="v">${esc(session.user.name)}</div></div>
+            <div><div class="k">Expires</div><div class="v">${exp}</div></div>
+            <div>${net}</div>
+          </div>
+        </div>
+        <div class="row-between">
+          <span class="pill ${esc(st.status)}">${esc(st.status)}</span>
+          ${st.expiring && st.status !== 'expired' ? `<span class="muted" style="font-size:.8rem">Expires in ${st.days} days</span>` : ''}
+        </div>
+        <div class="cardctl">${ctl}</div>
+      </div>`;
+    }
+
+    async function doAction(id, act, btn) {
+      const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+      const { ok, body } = await api(`/api/cards/${id}/${act}`, { method: 'POST' });
+      if (ok) {
+        const msg = act === 'freeze' ? 'Card frozen.' : act === 'unfreeze' ? 'Card unfrozen.' : 'Card renewed — a new card is on its way.';
+        toast(msg);
+        load();
+      } else { btn.disabled = false; btn.textContent = orig; toast(body?.error ? `Failed: ${body.error}` : 'Action failed.', true); }
+    }
+  </script>
+</body>
+</html>

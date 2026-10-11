@@ -1,4 +1,4 @@
-# AcmePay — Security Notes (Answer Key)
+# MyFiat — Security Notes (Answer Key)
 
 > ⚠️ **This is a controlled demo application.** The vulnerabilities below were
 > planted **intentionally** so the "Ari" autonomous security engineer can
@@ -14,8 +14,8 @@ are shared.
 
 ## Issue #1 — SQL Injection (string-concatenated query)
 
-- **Where:** `src/server.js`, transaction search handler starting at line **103**;
-  the vulnerable concatenation is at lines **131–132**.
+- **Where:** `src/server.js`, transaction search handler starting at line **114**;
+  the vulnerable concatenation is at lines **151–152**.
 - **Endpoint:** `GET /api/transactions?user=...&status=...`
 - **Why it's a vuln:** The `user` and `status` query parameters are interpolated
   directly into the SQL string (`LIKE '%${userTerm}%'`, `t.status = '${statusTerm}'`).
@@ -23,6 +23,11 @@ are shared.
   `UNION SELECT` to exfiltrate other tables (e.g. `users.password_md5`), or
   `' OR '1'='1` to dump the entire ledger.
 - **Severity:** Critical (OWASP A03:2021 Injection).
+- **Note:** The handler appends a bounded `LIMIT <pageSize> OFFSET <offset>`
+  (sanitized integers, page size clamped to 100) so a single request cannot
+  return the whole multi-million-row ledger. This is a performance/bounding
+  guard only — the `user`/`status` concatenation above is still fully injectable
+  (a trailing `-- ` in a UNION payload comments the LIMIT out). SQLi is intact.
 - **Proof of concept:**
   ```bash
   # Dump every transaction regardless of filter:
@@ -31,21 +36,21 @@ are shared.
   curl "localhost:8070/api/transactions?status=x' UNION SELECT id,0,email,password_md5,role,created_at,full_name,email,role FROM users-- "
   ```
 - **Fix:** Use a parameterized query (bound `?` placeholders). A complete fixed
-  implementation already exists in the same handler at lines **108–122** and is
-  activated by setting `ACMEPAY_SAFE_SEARCH=1` (see `config.safeSearch` in
-  `src/config.js` line **30**). To permanently fix, delete the concatenated
-  branch (lines 124–135) and always run the parameterized version.
-- **Verify fix:** `ACMEPAY_SAFE_SEARCH=1 npm start`, then the `' OR '1'='1`
+  implementation already exists in the same handler at lines **127–141** and is
+  activated by setting `MYFIAT_SAFE_SEARCH=1` (see `config.safeSearch` in
+  `src/config.js` line **37**). To permanently fix, delete the concatenated
+  branch (lines 144–155) and always run the parameterized version.
+- **Verify fix:** `MYFIAT_SAFE_SEARCH=1 npm start`, then the `' OR '1'='1`
   payload returns `count: 0` (treated as a literal search term).
 
 ---
 
 ## Issue #2 — Hard-coded secrets committed to source
 
-- **Where:** `src/config.js`, lines **20, 21, 24**.
-  - line 20: `stripeSecretKey` (fake `sk_live_...` payment-processor secret)
-  - line 21: `stripePublishableKey`
-  - line 24: `jwtSecret` (token-signing secret)
+- **Where:** `src/config.js`, lines **26, 27, 30**.
+  - line 26: `stripeSecretKey` (fake `sk_live_...` payment-processor secret)
+  - line 27: `stripePublishableKey`
+  - line 30: `jwtSecret` (token-signing secret)
 - **Why it's a vuln:** Secrets committed to the repository are exposed to anyone
   with source access and leak through git history, backups, and CI logs. A live
   payment secret key grants full control of the payment account.
@@ -58,14 +63,14 @@ are shared.
 
 ## Issue #3 — Broken access control / IDOR on user profile
 
-- **Where:** `src/server.js`, handler at line **81** (`GET /api/users/:id`).
-  Related weak token issue at lines **66–69** in `POST /api/login`.
+- **Where:** `src/server.js`, handler at line **92** (`GET /api/users/:id`).
+  Related weak token issue at lines **77–80** in `POST /api/login`.
 - **Endpoint:** `GET /api/users/:id`
 - **Why it's a vuln:** The endpoint returns sensitive PII (email, `ssn_last4`,
   `card_last4`, `balance_cents`) for **any** user id with **no authentication and
   no authorization**. Any anonymous caller can enumerate `/api/users/1`,
   `/api/users/2`, ... and harvest every customer's data (Insecure Direct Object
-  Reference). The login "token" (line 69) is only a base64 of `id:jwtSecret`, so
+  Reference). The login "token" (line 80) is only a base64 of `id:jwtSecret`, so
   it is also trivially forgeable.
 - **Severity:** High (OWASP A01:2021 Broken Access Control).
 - **Proof of concept:**
@@ -81,8 +86,8 @@ are shared.
 
 ## Issue #4 — Verbose error messages leak stack traces & SQL
 
-- **Where:** `src/server.js` lines **136–144** (transactions catch), line **167**
-  (payments catch), and the global error handler at lines **184–186**.
+- **Where:** `src/server.js` lines **160–164** (transactions catch), line **187**
+  (payments catch), and the global error handler at lines **732–734**.
 - **Why it's a vuln:** On error the API returns `err.message` (which can include
   the failing SQL) and the full `err.stack` to the client. This hands attackers
   the DB engine, schema hints, file paths, and query structure — greatly easing

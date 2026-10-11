@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Insights</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar"><div><h1>Insights</h1><div class="sub">Where your money went this month</div></div></header>
+      <main class="content">
+        <div class="sub-summary" id="summary">
+          <div class="skel skel-card" style="height:90px"></div><div class="skel skel-card" style="height:90px"></div><div class="skel skel-card" style="height:90px"></div>
+        </div>
+
+        <div class="grid-2" style="grid-template-columns:1fr 1fr;align-items:start">
+          <section class="card">
+            <div class="card__head"><h3>Spending by category</h3></div>
+            <div class="bars" id="cats"><div class="spinner">Loading…</div></div>
+          </section>
+          <section class="card">
+            <div class="card__head"><h3>Month over month</h3></div>
+            <div id="mom"><div class="spinner">Loading…</div></div>
+          </section>
+        </div>
+
+        <div class="section-title">Upcoming bills</div>
+        <section class="card">
+          <div id="bills"><div class="spinner">Loading…</div></div>
+        </section>
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) { renderShell('/insights.html', session); load(); }
+
+    async function load() {
+      const { ok, body } = await api('/api/insights');
+      if (!ok || !body) {
+        document.getElementById('summary').innerHTML = '';
+        document.getElementById('cats').innerHTML = '<div class="empty">Could not load insights.</div>';
+        document.getElementById('mom').innerHTML = ''; document.getElementById('bills').innerHTML = ''; return;
+      }
+      const income = body.income_cents || 0, spend = body.spend_cents || 0, net = income - spend;
+      document.getElementById('summary').innerHTML = `
+        <div class="stat"><div class="k">Income</div><div class="v tnum" style="color:var(--pos)">${fmtMoney(income)}</div></div>
+        <div class="stat"><div class="k">Spending</div><div class="v tnum">${fmtMoney(spend)}</div></div>
+        <div class="stat"><div class="k">Net</div><div class="v tnum" style="color:${net >= 0 ? 'var(--pos)' : 'var(--neg)'}">${net >= 0 ? '+' : '−'}${fmtMoney(Math.abs(net))}</div></div>`;
+
+      const cats = (body.spend_by_category || []).slice().sort((a, b) => b.amount_cents - a.amount_cents);
+      const cmax = Math.max(...cats.map(c => c.amount_cents), 1);
+      document.getElementById('cats').innerHTML = cats.length ? cats.map(c =>
+        `<div class="bar-row"><div class="lab">${esc(c.category)}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(c.amount_cents / cmax * 100)}%"></div></div><div class="val tnum">${fmtMoney(c.amount_cents, { cents2: false })}</div></div>`).join('')
+        : '<div class="empty">No category data.</div>';
+
+      const mom = body.month_over_month || [];
+      const mmax = Math.max(...mom.map(m => m.amount_cents), 1);
+      document.getElementById('mom').innerHTML = mom.length ? `<div class="mom">${mom.map((m, i) =>
+        `<div class="col ${i === mom.length - 1 ? 'cur' : ''}"><div class="mval tnum">${fmtMoneyShort(m.amount_cents)}</div><div class="barv" style="height:${Math.max(Math.round(m.amount_cents / mmax * 100), 4)}%"></div><div class="mlab">${esc(m.month)}</div></div>`).join('')}</div>`
+        : '<div class="empty">No history.</div>';
+
+      const bills = body.upcoming_bills || [];
+      document.getElementById('bills').innerHTML = bills.length ? bills.map(b =>
+        `<div class="billrow"><div style="display:flex;align-items:center;gap:12px"><div class="tx__icon" style="width:38px;height:38px">${esc(initials(b.merchant))}</div><div class="bl"><b>${esc(b.merchant)}</b><span>${fmtDue(b.due_at)}</span></div></div><b class="tnum">${fmtMoney(b.amount_cents)}</b></div>`).join('')
+        : `<div class="empty">${ICONS.bill}<div>No upcoming bills.</div></div>`;
+    }
+  </script>
+</body>
+</html>

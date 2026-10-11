@@ -41,6 +41,7 @@ server {
     proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP $remote_addr;   # real/spoofed client IP (via real_ip) to the app
     proxy_next_upstream error timeout http_502;
     proxy_connect_timeout 2s;
   }

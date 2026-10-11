@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Investments</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar">
+        <div><h1>Investments</h1><div class="sub">Your stocks and crypto, updated live</div></div>
+        <div class="topbar__actions"><a class="btn btn--primary btn--sm" href="/markets.html">Trade crypto</a></div>
+      </header>
+      <main class="content">
+        <section class="networth" id="portfolio">
+          <div class="lbl">Portfolio value</div>
+          <div class="skel skel-line" style="width:260px;height:44px;background:rgba(255,255,255,.08)"></div>
+        </section>
+
+        <div class="grid-2" style="margin-top:26px;grid-template-columns:1fr 1fr">
+          <section class="card">
+            <div class="card__head"><h3>Stocks</h3><span class="liveflag"><span class="blip"></span> Live</span></div>
+            <div id="stocks"><div class="spinner">Loading…</div></div>
+          </section>
+          <section class="card">
+            <div class="card__head"><h3>Crypto</h3><a href="/markets.html">Markets →</a></div>
+            <div id="crypto"><div class="spinner">Loading…</div></div>
+          </section>
+        </div>
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank. Prices are simulated.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    let timer = null;
+    if (session) { renderShell('/investments.html', session); load(); timer = setInterval(() => load(true), 20000); }
+    window.addEventListener('beforeunload', () => clearInterval(timer));
+
+    async function load(quiet) {
+      const { ok, body } = await api('/api/holdings');
+      if (!ok || !body) {
+        if (!quiet) { document.getElementById('stocks').innerHTML = '<div class="empty">Could not load holdings.</div>'; document.getElementById('crypto').innerHTML = ''; }
+        return;
+      }
+      const t = body.totals || {};
+      const dc = t.day_change_pct || 0;
+      document.getElementById('portfolio').innerHTML = `
+        <div class="lbl">Portfolio value</div>
+        <div class="big tnum">${fmtMoney(t.total_cents)}</div>
+        <div class="split">
+          <div class="s"><span>Stocks</span><b class="tnum">${fmtMoney(t.stocks_cents)}</b></div>
+          <div class="s"><span>Crypto</span><b class="tnum">${fmtMoney(t.crypto_cents)}</b></div>
+          <div class="s"><span>Today</span><b class="trend ${dc >= 0 ? 'up' : 'down'}">${dc >= 0 ? ICONS.arrowUp : ICONS.arrowDown} ${fmtPct(dc)}</b></div>
+        </div>`;
+      document.getElementById('stocks').innerHTML = renderList(body.stocks || []);
+      document.getElementById('crypto').innerHTML = renderList(body.crypto || []);
+    }
+
+    function renderList(items) {
+      if (!items.length) return `<div class="empty">${ICONS.chart}<div>No holdings.</div></div>`;
+      return items.map(h => {
+        const up = (h.change_pct || 0) >= 0;
+        return `<div class="holding">
+          <div class="sym">${esc(h.symbol)}</div>
+          <div class="nm"><b>${esc(h.name)}</b><span>${h.quantity} ${esc(h.symbol)}</span></div>
+          <div class="px tnum">${fmtMoney(h.price_cents)}<span>per unit</span></div>
+          ${sparkSvg(h.series, up)}
+          <div><div class="val tnum">${fmtMoney(h.value_cents)}</div><div class="chg ${up ? 'pos' : 'neg'}">${fmtPct(h.change_pct)}</div></div>
+        </div>`;
+      }).join('');
+    }
+  </script>
+</body>
+</html>
