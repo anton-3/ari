@@ -89,6 +89,10 @@ export class Fleet {
     this.stateFile = stateFile;
     this.demo = { serving: {}, operations: {}, incidents: [], notifications: {} };
     try { Object.assign(this.demo, JSON.parse(fs.readFileSync(stateFile, 'utf8'))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    // `resetting` only means a reset is actively running in this process; a value
+    // left over from an interrupted reset would otherwise disable incident
+    // detection forever across restarts, so a fresh process always starts clear.
+    this.demo.resetting = false;
     const latest = this.demo.incidents.at(-1);
     if (latest) Object.assign(this.incident, latest, { active: false });
     for (const operation of Object.values(this.demo.operations)) {
