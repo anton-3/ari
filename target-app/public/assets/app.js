@@ -8,7 +8,8 @@
 'use strict';
 
 const SESSION_KEY = 'myfiat_session';
-const ASSIST_URL = 'http://localhost:8072/assistant/chat';
+// Local dev runs the assistant on its own port; deployed, Caddy serves it same-origin.
+const ASSIST_URL = location.hostname === 'localhost' ? 'http://localhost:8072/assistant/chat' : '/assistant/chat';
 
 /* ---- mock mode ---------------------------------------------------------- */
 const MOCK = (() => {
