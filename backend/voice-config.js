@@ -1,3 +1,4 @@
+import { sayable } from "./voice-audio.js";
 import { spawnSync } from "node:child_process";
 
 export function voiceConfig(env = process.env, checkFfmpeg = true) {
@@ -52,7 +53,7 @@ export const xmlEscape = (value) => String(value).replace(/[<>&"']/g, (c) => ({ 
 export function relayTwiml(config, session, fallback = false) {
   const greeting = fallback ? "I switched audio connections." : session.greeting;
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Connect>
-    <ConversationRelay url="wss://${xmlEscape(config.host)}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
+    <ConversationRelay url="wss://${xmlEscape(config.host)}/relay" welcomeGreeting="${xmlEscape(sayable(greeting))}" interruptible="any"
       ttsProvider="${xmlEscape(config.ttsProvider)}" voice="${xmlEscape(config.ttsVoice)}" elevenlabsTextNormalization="on"
       transcriptionProvider="Deepgram" speechModel="nova-3-general" transcriptionLanguage="en-US">
       <Parameter name="session" value="${xmlEscape(session.token)}" />

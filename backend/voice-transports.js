@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { DeepgramStream } from "./voice-deepgram.js";
-import { speechSegments, kokoroPcm, convertAudio, sendPacedFrames } from "./voice-audio.js";
+import { speechSegments, kokoroPcm, convertAudio, sendPacedFrames, sayable } from "./voice-audio.js";
 import { providerFetch } from "./voice-http.js";
 
 const speechCacheKey = (config, segment) => `${config.kokoroUrl}:${config.voice}:${config.speed}:${segment}`;
@@ -34,7 +34,7 @@ export class RelayTransport {
   async speak(text, turn, interruptible = true) {
     if (turn?.aborted) return;
     this.interruptible = interruptible;
-    this.send({ type: "text", token: text, last: true, interruptible });
+    this.send({ type: "text", token: sayable(text), last: true, interruptible });
     this.session.recordSpoken(text, turn);
     // Relay supplies exact heard text on interruption. It owns playback pacing.
     this.interruptible = true;

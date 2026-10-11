@@ -51,6 +51,8 @@ cmd_deploy() {
     echo "== deploying $t ($d)"
     rsync -az --delete --exclude node_modules --exclude .env --exclude postmortems/ --exclude 'data/*.db*' \
       -e "ssh ${SSH_OPTS[*]}" "$ROOT/$d/" "$SERVER:$APP/$d/"
+    # The backend imports telemetry's fleet helpers and role scripts (backend/demo.js).
+    [ "$t" = ari ] || [ "$t" = backend ] && rsync -az --delete --exclude node_modules --exclude 'data/' -e "ssh ${SSH_OPTS[*]}" "$ROOT/telemetry/" "$SERVER:$APP/telemetry/"
     if [ "$t" = stt ]; then on "cd $APP/voice-stt && STT_API_KEY=\$(grep ^STT_API_KEY= /etc/ari-stt.env 2>/dev/null | cut -d= -f2) bash setup.sh"; continue; fi
     on "cd $APP/$d && chown -R ari:ari . && sudo -u ari npm ci --omit=dev --no-audit --no-fund --no-update-notifier --loglevel=error >/dev/null && systemctl restart $(unit "$t") && sleep 2 && systemctl is-active $(unit "$t")"
   done
@@ -111,6 +113,24 @@ cmd_drill() { # bounded DDoS drill on our own LB; Ari (on the server) calls the 
   ARI_BACKEND_URL=http://127.0.0.1:18080 node "$ROOT/telemetry/src/fleet/drill-ddos.js"
 }
 
+cmd_bank_route() { # bank-route <fleet|local>: where https://myfiat-... and customer-side Ari's bank point
+  local target=${1:-} upstream api
+  case "$target" in
+    fleet) upstream=172.232.28.48:80; api=http://172.232.28.48;;  # lb -> web nodes; visible on the network map
+    local) upstream=127.0.0.1:8071; api=http://127.0.0.1:8071;;   # the voice server's own SQLite copy
+    *) die "usage: fleet bank-route <fleet|local>";;
+  esac
+  on "set -e; f=/etc/caddy/Caddyfile; cp \$f \$f.bak-\$(date +%s)
+      awk -v up=$upstream '
+        /^myfiat-172-232-11-148\.sslip\.io \{/ { skip=1
+          print \"myfiat-172-232-11-148.sslip.io {\n    respond /alert-call 403\n    handle /assistant/* {\n        reverse_proxy 127.0.0.1:8072\n    }\n    handle {\n        reverse_proxy \" up \"\n    }\n}\"; next }
+        skip && /^\}/ { skip=0; next }
+        !skip' \$f > \$f.new
+      caddy validate --config \$f.new --adapter caddyfile >/dev/null 2>&1 && mv \$f.new \$f && systemctl reload caddy
+      sed -i 's#^MYFIAT_API_URL=.*#MYFIAT_API_URL=$api#' $APP/customer-ari/.env && systemctl restart ari-customer
+      echo \"bank -> $target ($upstream); customer-side Ari -> $api\""
+}
+
 cmd_help() { cat <<'EOF'
 fleet — control the Ari stack (voice server 172.232.11.148)
 
@@ -127,6 +147,8 @@ fleet — control the Ari stack (voice server 172.232.11.148)
   webhooks [fix]                 show Twilio number webhooks; "fix" points them at the server
   tunnel                         (Mac running telemetry) connect telemetry <-> server Ari
   drill                          run the DDoS drill against the LB (needs tunnel)
+  bank-route <fleet|local>       public bank via the fleet lb (shows on the map) or the voice server copy
+  reset-bank                     reseed MyFiat to the demo state (Avery's Visa 1881 expiring next month, etc.)
   smoke                          voice pipeline smoke test (Deepgram + LLM + Kokoro, no phone call)
   ssh                            shell on the server
   add-key "<ssh public key>"     give a teammate access
@@ -151,6 +173,9 @@ case "$c" in
   webhooks) cmd_webhooks "${1:-}";;
   tunnel) cmd_tunnel;;
   drill) cmd_drill;;
+  bank-route) cmd_bank_route "${1:-}";;
+  reset-bank) confirm "Reset the bank to its demo state (wipes transfers, trades, renewals)?"
+              on "cd $APP/target-app && sudo -u ari node seed.js --force | tail -1 && systemctl restart myfiat && echo bank reset";;
   smoke) on "cd $APP/backend && sudo -u ari node --env-file=.env voice-smoke.js 2>&1 | tail -1";;
   ssh) on -t;;
   add-key) [[ "${1:-}" =~ ^ssh-(ed25519|rsa)\ [A-Za-z0-9+/=]+ ]] || die 'usage: fleet add-key "ssh-ed25519 AAAA... name"'

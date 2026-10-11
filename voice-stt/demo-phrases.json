@@ -1,0 +1,18 @@
+[
+  ["am_michael", "Hey Ari, what's going on with MyFiat right now?"],
+  ["af_heart", "Is this a DDoS attack on the load balancer?"],
+  ["am_adam", "Yes, ban those IP addresses."],
+  ["bm_george", "Spin up another node on Linode to serve the web app."],
+  ["af_bella", "Add rate limiting to the nginx reverse proxy and text me the pull request."],
+  ["am_michael", "Roll back that commit and rotate the Stripe key."],
+  ["af_heart", "Deploy the agents to scan the fleet for vulnerabilities."],
+  ["bf_emma", "Close port 22 on web-03 and shut down the worker node."],
+  ["am_adam", "What's my checking balance?"],
+  ["af_heart", "Freeze my card ending in 7781."],
+  ["bm_george", "I didn't make that charge at Umbrella Pharmacy. Can you dispute it?"],
+  ["af_bella", "Cancel my Streamly subscription and my Vantage Fitness membership."],
+  ["am_michael", "How much did I spend on RideNow and Globex Airlines this month?"],
+  ["bf_emma", "How are my NVIDIA, Solana and Dogecoin holdings doing?"],
+  ["af_heart", "Renew my Mastercard and unfreeze my Visa debit card."],
+  ["am_adam", "When is my Lumen Energy bill due?"]
+]

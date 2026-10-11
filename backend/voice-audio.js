@@ -53,7 +53,11 @@ async function timed(promise, ms, signal, label) {
   }
 }
 
+// Spell brand names the way they should sound; only the spoken audio changes, never transcripts.
+export const sayable = (text) => String(text).replace(/\bMy ?Fiat\b/gi, "My Fee-aht").replace(/\bFiat\b/gi, "Fee-aht");
+
 export async function* kokoroPcm(config, text, signal, fetcher = providerFetch) {
+  text = sayable(text);
   const started = performance.now();
   // Timeout must also cancel the underlying HTTP request, not just stop awaiting it.
   const controller = new AbortController();

@@ -12,6 +12,10 @@ import { WebSocketServer } from "ws";
 import OpenAI from "openai";
 
 import { tools, runTool, ACTION_TOOLS } from "./tools.js";
+import { apiGet } from "./myfiat.js";
+
+// Spoken audio only: say "My Fee-aht", not "fi-at". Chat text and transcripts keep "MyFiat".
+const sayable = (text) => String(text).replace(/\bMy ?Fiat\b/gi, "My Fee-aht").replace(/\bFiat\b/gi, "Fee-aht");
 import { CHAT_SYSTEM_PROMPT, VOICE_SYSTEM_PROMPT } from "./persona.js";
 import { placeSuspiciousChargeCall, DEMO_PHONE } from "./alert-call.js";
 
@@ -37,7 +41,14 @@ const MODEL = process.env.CHAT_MODEL || "hackathon-chat";
 // Shared tool loop. Returns { reply, actions } where actions lists any
 // state-changing tools that ran this turn (for the UI's action chips).
 async function runConversation({ systemPrompt, history, token, signal }) {
-  const messages = [{ role: "system", content: systemPrompt }, ...history];
+  // Ground every turn in the customer's real cards so Ari never has to ask which ones they have.
+  const [cards, me] = token
+    ? await Promise.all([runTool("list_cards", {}, token).catch(() => ""), apiGet("/api/me", token).catch(() => null)])
+    : ["", null];
+  const name = String(me?.user?.name || "").replace(/\s+Admin$/i, "").trim();
+  const today = new Date().toISOString().slice(0, 10);
+  const who = name ? `\nYou are talking with ${name}, the signed-in account holder. Address them as ${name.split(" ")[0]} and treat every account and card below as theirs ("your checking", "your Mastercard"). You are Ari; never speak as if you were them.` : "";
+  const messages = [{ role: "system", content: `${systemPrompt}\n\nToday is ${today}.${who}${cards ? `\nCustomer's cards: ${cards}` : ""}` }, ...history];
   const actions = [];
   for (let step = 0; step < MAX_TOOL_STEPS; step++) {
     const completion = await client.chat.completions.create(
@@ -134,7 +145,7 @@ app.post("/voice", (req, res) => {
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(greeting)}" interruptible="any"
+    <ConversationRelay url="wss://${host}/relay" welcomeGreeting="${xmlEscape(sayable(greeting))}" interruptible="any"
       ttsProvider="${TTS_PROVIDER}" voice="${TTS_VOICE}" elevenlabsTextNormalization="on"
       transcriptionProvider="Deepgram" speechModel="nova-3-general" transcriptionLanguage="en-US">
       <Parameter name="greeting" value="${xmlEscape(greeting)}" />
@@ -190,7 +201,7 @@ wss.on("connection", (ws) => {
       // Persist the model/tool turns the loop produced so context carries over.
       messages.length = 0;
       messages.push(...updated.filter((m) => m.role !== "system"));
-      send({ type: "text", token: reply, last: true });
+      send({ type: "text", token: sayable(reply), last: true });
     } catch (err) {
       if (turn.aborted) {
         if (turn.heard) messages.push({ role: "assistant", content: turn.heard });

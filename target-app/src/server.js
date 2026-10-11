@@ -253,9 +253,13 @@ const QUOTES = {
   SOL:  { name: 'Solana',                close: 16740 },
   ADA:  { name: 'Cardano',               close: 38 },
   DOGE: { name: 'Dogecoin',              close: 12 },
+  XRP:  { name: 'XRP',                   close: 240 },
+  LTC:  { name: 'Litecoin',              close: 9500 },
+  AVAX: { name: 'Avalanche',             close: 2800 },
+  LINK: { name: 'Chainlink',             close: 1600 },
 };
 // The crypto universe (also the symbols we fetch live from CoinGecko).
-const CRYPTO_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'ADA', 'DOGE']);
+const CRYPTO_SYMBOLS = new Set(['BTC', 'ETH', 'SOL', 'ADA', 'DOGE', 'XRP', 'LTC', 'AVAX', 'LINK']);
 // Live price state, seeded at previous close, random-walked on each read.
 const livePrice = {};
 for (const [sym, q] of Object.entries(QUOTES)) livePrice[sym] = q.close;
@@ -285,8 +289,8 @@ function quote(symbol) {
 // users produce ~1 upstream call per interval (not one per request). On any
 // failure/timeout we fall back to the in-code random-walk quote table so the
 // page never breaks; the response carries source:'live'|'fallback'.
-const CG_IDS = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', cardano: 'ADA', dogecoin: 'DOGE' };
-const CG_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,dogecoin&vs_currencies=usd&include_24hr_change=true';
+const CG_IDS = { bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', cardano: 'ADA', dogecoin: 'DOGE', ripple: 'XRP', litecoin: 'LTC', 'avalanche-2': 'AVAX', chainlink: 'LINK' };
+const CG_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,dogecoin,ripple,litecoin,avalanche-2,chainlink&vs_currencies=usd&include_24hr_change=true';
 const CRYPTO_TTL_MS = 20000;
 const CRYPTO_TIMEOUT_MS = 2500;
 let cryptoCache = { at: 0, source: 'fallback', prices: null };
@@ -596,6 +600,77 @@ app.post('/api/trade', requireAuth, async (req, res, next) => {
       ok: true,
       fill: { symbol, side, quantity, price_cents, cash_cents_after: num(after.balance_cents) },
     });
+  } catch (err) { next(err); }
+});
+
+// POST /api/transfers { to, to_email?, amount_cents, note? } -> send money from checking (Ari + UI + sim users).
+// If to_email (or to) is another MyFiat customer, it's a real P2P transfer: their checking is credited and
+// they see it as incoming. Otherwise known merchants match by name, anyone else goes out via MyFiat Pay.
+async function merchantNamed(name, category) {
+  return (await db.get('SELECT id, name FROM merchants WHERE name = ? ORDER BY id LIMIT 1', [name])) ||
+    { id: (await db.run('INSERT INTO merchants (name, category, country, created_at) VALUES (?, ?, ?, ?)',
+      [name, category, 'US', new Date().toISOString()])).lastInsertRowid, name };
+}
+app.post('/api/transfers', requireAuth, async (req, res, next) => {
+  try {
+    const to = String(req.body?.to || req.body?.to_email || '').trim().slice(0, 80);
+    const amount_cents = Math.round(Number(req.body?.amount_cents));
+    if (!to) return res.status(400).json({ error: 'to is required' });
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) return res.status(400).json({ error: 'amount_cents must be positive' });
+    const account = await cashAccountFor(req.user.id);
+    if (!account) return res.status(400).json({ error: 'no cash account available' });
+    if (num(account.balance_cents) < amount_cents) {
+      return res.status(400).json({ error: 'insufficient funds', available_cents: num(account.balance_cents) });
+    }
+    const email = String(req.body?.to_email || (to.includes('@') ? to : '')).toLowerCase();
+    const recipient = email ? await db.get('SELECT id, full_name FROM users WHERE lower(email) = ?', [email]) : null;
+    if (recipient && recipient.id === req.user.id) return res.status(400).json({ error: "can't send money to yourself" });
+    const recipientAccount = recipient ? await cashAccountFor(recipient.id) : null;
+    const payee = recipient ? recipient.full_name : to;
+    const known = recipient ? null : await db.get('SELECT id, name FROM merchants WHERE lower(name) = lower(?) ORDER BY id LIMIT 1', [to]);
+    const merchant = known || await merchantNamed('MyFiat Pay', 'transfers_out');
+    const description = String(req.body?.note || '').trim().slice(0, 120) ||
+      (known ? `Payment to ${known.name}` : `Transfer to ${payee}`);
+    const now = new Date().toISOString();
+    await db.run('UPDATE accounts SET balance_cents = balance_cents - ? WHERE id = ?', [amount_cents, account.id]);
+    const info = await db.run(
+      `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
+       VALUES (?, ?, ?, 'USD', 'succeeded', ?, ?)`,
+      [req.user.id, merchant.id, amount_cents, description, now]);
+    if (recipientAccount) {
+      const incoming = await merchantNamed('MyFiat Transfer', 'transfer');
+      const sender = await db.get('SELECT full_name FROM users WHERE id = ?', [req.user.id]);
+      await db.run('UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?', [amount_cents, recipientAccount.id]);
+      await db.run(
+        `INSERT INTO transactions (user_id, merchant_id, amount_cents, currency, status, description, created_at)
+         VALUES (?, ?, ?, 'USD', 'succeeded', ?, ?)`,
+        [recipient.id, incoming.id, amount_cents, `Transfer from ${sender?.full_name || 'a MyFiat customer'}`, now]);
+    }
+    const after = await db.get('SELECT balance_cents FROM accounts WHERE id = ?', [account.id]);
+    res.status(201).json({ ok: true, transaction_id: info.lastInsertRowid, to: payee, amount_cents, description,
+      p2p: Boolean(recipientAccount), from_account: account.name, balance_cents_after: num(after.balance_cents) });
+  } catch (err) { next(err); }
+});
+
+// POST /api/transfers/internal { from, to, amount_cents? } -> move money between the user's own accounts.
+// from/to are account kinds (checking | savings | credit) or account ids. Paying a credit card with no
+// amount pays the full balance owed.
+app.post('/api/transfers/internal', requireAuth, async (req, res, next) => {
+  try {
+    const accounts = await db.all('SELECT * FROM accounts WHERE user_id = ? ORDER BY id', [req.user.id]);
+    const find = (v) => accounts.find((a) => String(a.id) === String(v)) || accounts.find((a) => a.kind === String(v || '').toLowerCase());
+    const from = find(req.body?.from), to = find(req.body?.to);
+    if (!from || !to || from.id === to.id) return res.status(400).json({ error: 'from and to must be two different accounts (checking, savings, credit)' });
+    if (from.kind === 'credit') return res.status(400).json({ error: "can't move money out of a credit card" });
+    let amount_cents = Math.round(Number(req.body?.amount_cents));
+    if (!(amount_cents > 0) && to.kind === 'credit') amount_cents = Math.max(0, -num(to.balance_cents));
+    if (!(amount_cents > 0)) return res.status(400).json({ error: 'amount_cents must be positive' });
+    if (num(from.balance_cents) < amount_cents) return res.status(400).json({ error: 'insufficient funds', available_cents: num(from.balance_cents) });
+    await db.run('UPDATE accounts SET balance_cents = balance_cents - ? WHERE id = ?', [amount_cents, from.id]);
+    await db.run('UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?', [amount_cents, to.id]);
+    const after = await db.all('SELECT id, name, kind, balance_cents FROM accounts WHERE id IN (?, ?)', [from.id, to.id]);
+    res.json({ ok: true, amount_cents, from: from.name, to: to.name,
+      balances_after: after.map((a) => ({ ...a, balance_cents: num(a.balance_cents) })) });
   } catch (err) { next(err); }
 });
 
