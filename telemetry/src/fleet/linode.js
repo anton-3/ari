@@ -9,6 +9,9 @@ import crypto from 'node:crypto';
 export const FLEET_TAG = 'ari-net';
 export const REGION = 'us-ord';
 export const TYPE = 'g6-nanode-1';
+// Per-role plan overrides (db holds the large AcmePay dataset).
+export const ROLE_TYPE = { db: 'g6-standard-4' };
+export const typeForRole = (role) => ROLE_TYPE[role] || TYPE;
 export const IMAGE = 'linode/ubuntu24.04';
 export const MAX_INSTANCES = 8;
 
@@ -49,9 +52,13 @@ async function api(path, method = 'GET', body) {
 export function isDenied(id) { return DENY_IDS.has(String(id)); }
 
 export function isAriNet(inst) {
+  // Authoritative: carries the "ari-net" tag AND is not a denylisted instance
+  // (by id or original label). We no longer require an "ari-net-*" label prefix,
+  // because operators may rename fleet nodes (e.g. ari-net-db-1 -> database-01);
+  // none of the denylisted instances carry the ari-net tag, so the tag + the
+  // id/label denylist together still fully protect the forbidden instances.
   return !!inst
     && Array.isArray(inst.tags) && inst.tags.includes(FLEET_TAG)
-    && typeof inst.label === 'string' && inst.label.startsWith('ari-net-')
     && !DENY_IDS.has(String(inst.id)) && !DENY_LABELS.has(inst.label);
 }
 
@@ -93,11 +100,12 @@ export async function getInstance(id) {
 }
 
 export async function createInstance({ role, label, pubkey }) {
+  const type = typeForRole(role);
   if (!/^ari-net-[a-z]+-\d+$/.test(label)) throw new Error('bad label');
   return api('/linode/instances', 'POST', {
     label,
     region: REGION,
-    type: TYPE,
+    type,
     image: IMAGE,
     // Random root password: required by the API, never stored or logged.
     root_pass: `${crypto.randomBytes(24).toString('base64url')}Aa1!`,

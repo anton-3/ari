@@ -21,10 +21,10 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
   render() {
     if (!this.state.error) return this.props.children
     return (
-      <div className="gx-nofeed" role="alert">
-        <div className="gx-nofeed-h">MAP RENDER ERROR</div>
-        <div className="gx-nofeed-sub">{this.state.error.message}</div>
-        <button type="button" className="gx-btn" onClick={() => this.setState({ error: null })}>
+      <div className="gx-nofeed iso-nofeed" role="alert">
+        <div className="gx-nofeed-h iso-nofeed-h">MAP RENDER ERROR</div>
+        <div className="gx-nofeed-sub iso-nofeed-sub">{this.state.error.message}</div>
+        <button type="button" className="gx-btn iso-btn" onClick={() => this.setState({ error: null })}>
           RELOAD VIEW
         </button>
       </div>

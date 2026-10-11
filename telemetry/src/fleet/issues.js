@@ -11,6 +11,7 @@
 // An issue keeps a stable id while its condition holds and clears when it stops.
 import net from 'node:net';
 import { sshRun } from './ssh.js';
+import { symbolAt } from './codemap.js';
 
 export const EXPECTED_SERVICE = {
   lb: { name: 'nginx', port: 80 },
@@ -217,6 +218,8 @@ export async function checkCode(store, node) {
         severity: rule.severity, kind: 'app-vuln', title: rule.title,
         detail: `${file}:${hits.map((h) => h.n).join(',')} (deployed at /opt/acmepay/${rule.rel}) - ${rule.endpoint}`,
         source: 'code-scan', file, line: hits[0].n, endpoint: rule.endpoint,
+        // innermost codemap symbol containing the line, so the badge lands on it
+        symbolId: symbolAt(file, hits[0].n),
       };
       store.set(node.id, key, issue);
       found.push({ key, ...issue });

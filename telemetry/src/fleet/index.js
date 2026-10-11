@@ -12,6 +12,8 @@ import * as linode from './linode.js';
 import { sshRun, sshPipeTar, forgetHost, closeMaster, PUBKEY_PATH } from './ssh.js';
 import { sampleNode, cpuUtil, processesOf, LinkTracker } from './collector.js';
 import { IssueStore, fastChecks, checkExposure, checkAuthLog, checkUpdates, checkCode } from './issues.js';
+import { ingestNginx } from './codemap.js';
+import { analyzeWindow, blocklistContent, incidentConfContent, isPlausibleSourceIp, INCIDENT_CONF, BLOCKLIST_FILE } from './incident.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TELEMETRY_DIR = path.resolve(HERE, '..', '..');
@@ -30,6 +32,8 @@ const ROLE_SET = new Set(ROLES.map((r) => r.role));
 const SAMPLE_MS = 2000;
 const REFRESH_MS = 10000;
 const SLOW = { exposure: 60e3, auth: 60e3, updates: 600e3, code: 600e3 };
+// DDoS detector thresholds (attacker req/s; see incident.js for per-IP floor/window).
+const TRIP_ABS_ = 20, TRIP_MULT_ = 3, CLEAR_ABS_ = 8, TRIP_DEBOUNCE_ = 2, CLEAR_DEBOUNCE_ = 3;
 
 function httpError(status, message) { const e = new Error(message); e.status = status; return e; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -65,6 +69,9 @@ export class Fleet {
     this.controllerIp = null;
     this._cpuPrev = null;
     this.controllerCpu = null;
+    this.incident = { active: false, since: null, reqPerSec: 0, baselineRps: 3, attackerIps: [],
+      blockedIps: [], _baseline: 3, _trip: 0, _clear: 0, _confAt: 0, _busy: false };
+    this.incidentLock = makeLock();
     this.enabled = linode.hasToken() && fs.existsSync(PUBKEY_PATH);
     this.pubkey = this.enabled ? fs.readFileSync(PUBKEY_PATH, 'utf8').trim() : null;
   }
@@ -78,6 +85,8 @@ export class Fleet {
     setInterval(() => this.slowChecks(), 5000);
     setInterval(() => this.syncUpstream().catch(() => {}), 20000);
     setInterval(() => this.syncDeps().catch((e) => this.log('[fleet] dep sync failed:', e.message)), 10000);
+    setInterval(() => this.pollRoutes().catch(() => {}), 5000);
+    setInterval(() => this.pollIncident().catch((e) => this.log('[fleet] incident poll failed:', e.message)), 2000);
   }
 
   active() { return this.instances.size > 0; }
@@ -335,6 +344,163 @@ export class Fleet {
       }
       return r.code === 0;
     });
+  }
+
+  // Per-route traffic for the codemap: last 60s of the lb's nginx access log,
+  // reduced on the lb to "status request_time METHOD path" per request.
+  // The current ari-net load balancer node, or null.
+  lbNode() {
+    return this.nodesOfRole('lb').find((x) => { const st = this._state(x.id); return st.ready && !st.deleting && st.failStreak === 0 && x.inst.status === 'running'; }) || null;
+  }
+
+  // Private IPs of all fleet nodes (so our own load generators are never "attackers").
+  _fleetPrivateIps() {
+    const s = new Set();
+    for (const n of this.instances.values()) if (n.privateIp) s.add(n.privateIp);
+    return s;
+  }
+
+  // Ensure the lb has conf.d/ari-net-incident.conf (real client IP from the
+  // controller's egress + blocklist include) and an existing blocklist file.
+  async ensureIncidentConf(lb) {
+    if (!lb || !this.controllerIp) return;
+    if (Date.now() - this.incident._confAt < 60000) return;
+    const cmd = `test -f ${BLOCKLIST_FILE} || printf '# ari-net incident blocklist\\n' > ${BLOCKLIST_FILE}; `
+      + `cat > ${INCIDENT_CONF}.new && if ! cmp -s ${INCIDENT_CONF}.new ${INCIDENT_CONF}; then mv ${INCIDENT_CONF}.new ${INCIDENT_CONF}; `
+      + `nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo applied || echo testfail; else rm -f ${INCIDENT_CONF}.new; echo same; fi`;
+    const r = await sshRun(lb.publicIp, cmd, { input: incidentConfContent(this.controllerIp), timeoutMs: 20000 });
+    if (r.code === 0 && /applied/.test(r.stdout)) this.log(`[fleet] lb real-ip/blocklist config applied (${lb.label})`);
+    if (r.code === 0) this.incident._confAt = Date.now();
+  }
+
+  // Read a short window of the lb access log and run the DDoS detector.
+  async pollIncident() {
+    if (this.incident._busy) return;
+    const lb = this.lbNode();
+    const inc = this.incident;
+    if (!lb) { if (inc.active) this._setIncident(false, null); return; }
+    this.incident._busy = true;
+    try {
+      await this.ensureIncidentConf(lb);
+      const cmd = "tail -n 40000 /var/log/nginx/ari-access.log 2>/dev/null | awk -v t=$(( $(date +%s) - 10 )) '$1>=t {print $1, $2, $3}'";
+      const r = await sshRun(lb.publicIp, cmd, { timeoutMs: 10000 });
+      if (r.code !== 0) return;
+      const blocked = new Set(inc.blockedIps);
+      const { reqPerSec, attackers } = analyzeWindow(r.stdout, { windowSec: 10, fleetPrivateIps: this._fleetPrivateIps(), controllerIp: this.controllerIp });
+      // attackers still hitting us (blocked ones are mitigated -> excluded)
+      const live = attackers.filter((a) => !blocked.has(a.ip));
+      const attackRate = live.reduce((s, a) => s + a.reqPerSec, 0);
+      inc.reqPerSec = reqPerSec;
+      inc.attackerIps = live.slice(0, 10);
+      if (!inc.active) {
+        // learn baseline from calm periods only
+        if (attackRate < CLEAR_ABS_) inc._baseline = inc._baseline * 0.8 + reqPerSec * 0.2;
+        inc.baselineRps = Number(inc._baseline.toFixed(2));
+      }
+      const tripping = live.length >= 2 && attackRate >= Math.max(TRIP_ABS_, inc._baseline * TRIP_MULT_);
+      if (tripping) { inc._trip++; inc._clear = 0; } else { inc._clear++; inc._trip = 0; }
+      if (!inc.active && inc._trip >= TRIP_DEBOUNCE_) this._setIncident(true, lb);
+      else if (inc.active && attackRate < CLEAR_ABS_ && inc._clear >= CLEAR_DEBOUNCE_) this._setIncident(false, lb);
+      this._refreshIncidentIssue(lb);
+    } finally { this.incident._busy = false; }
+  }
+
+  _setIncident(active, lb) {
+    const inc = this.incident;
+    if (active === inc.active) return;
+    inc.active = active;
+    inc.since = active ? new Date().toISOString() : null;
+    inc._trip = 0; inc._clear = 0;
+    inc.lbNodeId = lb ? lb.id : null;
+    inc.lbLabel = lb ? lb.label : null;
+    this.log(active ? `[fleet] DDoS incident DETECTED on ${lb.label}: ${inc.reqPerSec} req/s, attackers ${inc.attackerIps.map((a) => a.ip).join(', ')}`
+      : `[fleet] DDoS incident CLEARED on ${lb ? lb.label : 'lb'}`);
+  }
+
+  _refreshIncidentIssue(lb) {
+    const inc = this.incident;
+    if (!lb) return;
+    if (inc.active) {
+      const ips = inc.attackerIps.map((a) => `${a.ip} (${a.reqPerSec}/s)`).join(', ') || 'none currently';
+      this.issues.set(lb.id, 'ddos', {
+        severity: inc.reqPerSec >= inc._baseline * 6 ? 'critical' : 'high', kind: 'ddos',
+        title: 'L7 request flood (possible DDoS)',
+        detail: `${inc.reqPerSec} req/s vs ~${inc.baselineRps} baseline; sources: ${ips}${inc.blockedIps.length ? `; blocked: ${inc.blockedIps.join(', ')}` : ''}`,
+        source: 'nginx access log', attackerIps: inc.attackerIps.map((a) => a.ip), blockedIps: [...inc.blockedIps],
+      });
+    } else {
+      this.issues.set(lb.id, 'ddos', null);
+    }
+  }
+
+  incidentView() {
+    const inc = this.incident;
+    const lb = this.lbNode();
+    return {
+      active: inc.active,
+      since: inc.since,
+      lbNodeId: lb ? lb.id : (inc.lbNodeId || null),
+      label: lb ? lb.label : (inc.lbLabel || null),
+      reqPerSec: inc.reqPerSec,
+      baselineRps: inc.baselineRps,
+      attackerIps: inc.attackerIps,
+      blockedIps: [...inc.blockedIps],
+    };
+  }
+
+  // Block source IPs at the lb (nginx deny + reload). ari-net lb only.
+  async blockIps(ips) {
+    return this.incidentLock(async () => {
+      const lb = this.lbNode();
+      if (!lb) throw httpError(409, 'no ready ari-net lb to block at');
+      const valid = [...new Set((ips || []).map((x) => String(x).trim()))].filter(isPlausibleSourceIp);
+      const rejected = (ips || []).filter((x) => !isPlausibleSourceIp(String(x).trim()));
+      if (!valid.length) throw httpError(400, 'no valid source IPs to block');
+      const set = new Set(this.incident.blockedIps);
+      for (const ip of valid) set.add(ip);
+      await this._writeBlocklist(lb, set);
+      this.incident.blockedIps = [...set];
+      this._refreshIncidentIssue(lb);
+      this.log(`[fleet] blocked at ${lb.label}: ${valid.join(', ')}`);
+      return { ok: true, blocked: valid, rejected, blockedIps: [...set] };
+    });
+  }
+
+  async unblockIps({ ips, all } = {}) {
+    return this.incidentLock(async () => {
+      const lb = this.lbNode();
+      if (!lb) throw httpError(409, 'no ready ari-net lb');
+      const set = new Set(this.incident.blockedIps);
+      let removed;
+      if (all) { removed = [...set]; set.clear(); }
+      else { removed = (ips || []).map((x) => String(x).trim()).filter((ip) => set.delete(ip)); }
+      await this._writeBlocklist(lb, set);
+      this.incident.blockedIps = [...set];
+      this._refreshIncidentIssue(lb);
+      this.log(`[fleet] unblocked at ${lb.label}: ${removed.join(', ') || '(none)'}`);
+      return { ok: true, unblocked: removed, blockedIps: [...set] };
+    });
+  }
+
+  async _writeBlocklist(lb, ipSet) {
+    const F = BLOCKLIST_FILE;
+    const cmd = `cat > ${F}.new && cp ${F} ${F}.bak 2>/dev/null; mv ${F}.new ${F}; `
+      + `if nginx -t >/dev/null 2>&1; then systemctl reload nginx && echo ok; else mv ${F}.bak ${F} 2>/dev/null; echo invalid; exit 1; fi`;
+    const r = await sshRun(lb.publicIp, cmd, { input: blocklistContent([...ipSet]), timeoutMs: 20000 });
+    if (r.code !== 0) throw httpError(502, `nginx blocklist reload failed on ${lb.label}`);
+  }
+
+  async pollRoutes() {
+    if (this._routesBusy) return;
+    const lb = this.nodesOfRole('lb').find((x) => { const st = this._state(x.id); return st.ready && !st.deleting && st.failStreak === 0; });
+    if (!lb) return;
+    this._routesBusy = true;
+    try {
+      const cmd = "tail -n 30000 /var/log/nginx/ari-access.log 2>/dev/null | awk -v t=$(( $(date +%s) - 60 )) "
+        + "'$1>=t {print $2, $NF, $4, $5}'";
+      const r = await sshRun(lb.publicIp, cmd, { timeoutMs: 10000 });
+      if (r.code === 0) ingestNginx('app', r.stdout, 60);
+    } finally { this._routesBusy = false; }
   }
 
   // ---------- db / cache membership (like the lb upstream) ----------

@@ -198,7 +198,7 @@ function jsSymbols(fileId, text) {
           .map((p) => {
             const key = p.key.type === 'Identifier' ? p.key.name : String(p.key.value);
             const s = { id: `${P(name)}/${key}`, name: key, kind: 'config', line: L(p), endLine: E(p), calls: [] };
-            if (SECRET_RE.test(key)) s.secret = true;
+            if (SECRET_RE.test(key) && !/publishable|public/i.test(key)) s.secret = true;
             return s;
           });
         symbols.push({ id: P(name), name, kind: 'config', line: L(decl), endLine: E(decl), calls: [], children, _refs: [] });
@@ -274,7 +274,9 @@ function pySymbols(fileId, text) {
   const names = top.map((t) => t.name);
   const callsIn = (from, to, self) => {
     const body = lines.slice(from, to + 1).join('\n');
-    return names.filter((n) => n !== self && new RegExp(`(^|[^\\w.])${n}\\s*\\(`, 'm').test(body)).map(P);
+    // direct calls, plus functions handed to a thread/callback (target=fn)
+    return names.filter((n) => n !== self && (new RegExp(`(^|[^\\w.])${n}\\s*\\(`, 'm').test(body)
+      || new RegExp(`target\\s*=\\s*${n}\\b`).test(body))).map(P);
   };
   const queriesIn = (from, to, prefix) => {
     const out = [];

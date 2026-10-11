@@ -8,8 +8,20 @@ UP=/etc/nginx/ari-net-upstream.conf
 # Placeholder until the controller syncs real app nodes (returns 502).
 [ -s "$UP" ] || echo 'server 127.0.0.1:65535 max_fails=0;' > "$UP"
 cat > /etc/nginx/conf.d/ari-net-log.conf <<'NG'
-# epoch status client "request" bytes upstream  (read by the ari-net collector)
-log_format arinet '$msec $status $remote_addr "$request" $body_bytes_sent $upstream_addr';
+# epoch status client "request" bytes upstream request_time  (read by the ari-net collector)
+log_format arinet '$msec $status $remote_addr "$request" $body_bytes_sent $upstream_addr $request_time';
+
+# Rate-limit zone insertion point (http context). A security PR adds a
+# `limit_req_zone ... zone=ari_rl:10m rate=10r/s;` directive on the line below.
+    # ari:rate-limit-zone
+NG
+
+# Incident-response placeholders: real client IP + IP blocklist. The controller
+# rewrites this file (and ari-net-blocklist.conf) via the block-ips endpoint.
+[ -s /etc/nginx/ari-net-blocklist.conf ] || echo '# ari-net incident blocklist' > /etc/nginx/ari-net-blocklist.conf
+[ -s /etc/nginx/conf.d/ari-net-incident.conf ] || cat > /etc/nginx/conf.d/ari-net-incident.conf <<'NG'
+# ari-net incident response — managed by the fleet controller. Do not edit by hand.
+include /etc/nginx/ari-net-blocklist.conf;
 NG
 cat > /etc/nginx/sites-available/acmepay <<'NG'
 upstream acmepay {
@@ -23,6 +35,7 @@ server {
   keepalive_requests 10000;
   location = /nginx-health { return 200 "ok\n"; }
   location / {
+        # ari:rate-limit-apply
     proxy_pass http://acmepay;
     proxy_http_version 1.1;
     proxy_set_header Connection "";

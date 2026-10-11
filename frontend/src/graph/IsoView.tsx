@@ -1,18 +1,27 @@
 import { useEffect, useRef } from 'react'
-import { ACTIVE_AGENT, codeFor, fileIssues, fmtMem, fmtRate, isControl, issueLevel } from '../../graph/GraphView'
-import type { Sel } from '../../graph/GraphView'
-import { loadPos, savePos, takeAlias, takePlacement } from '../../graph/positions'
-import type { Agent, Codemap, CodemapRole, Fleet, FleetIssue, FleetLink, FleetNode, Metrics } from '../../graph/types'
+import { ACTIVE_AGENT, SEV_RANK, fmtMem, fmtRate, isControl, issueLevel, levelOf } from './helpers'
+import type { Level } from './helpers'
+import { chainOf, errFrac, issueChain, issuesUnder, routeOf, treeFor } from './codetree'
+import type { CodeTree, TItem } from './codetree'
+import { loadPos, savePos, takeAlias, takePlacement } from './positions'
+import type { Agent, Codemap, Fleet, FleetLink, FleetNode, Metrics } from './types'
 
 // ---------------------------------------------------------------------------
 // Isometric fleet map (Cloudcraft-style). The model is a flat 2D ground plane
 // (world x/y, snapped to a grid); a fixed isometric camera projects it, so pan
 // and zoom stay 2D. Every block, pipe and dash maps to real fleet data.
+//
+// Recursive expansion: server → files → symbols → child symbols. Anything with
+// children opens in place into a platform of smaller tiles (lid lifts), one
+// level smaller each time; siblings make room on screen only.
 // ---------------------------------------------------------------------------
 
+/** Selection: a server (optionally a path of item keys below it) or a link. */
+export type IsoSel = { kind: 'node'; id: string; path?: string[] } | { kind: 'link'; id: string }
+
 export const GRID = 60
-const CX = Math.cos(Math.PI / 6) // screen x per world unit along an iso axis
-const CY = 0.5 // screen y per world unit along an iso axis
+const CX = Math.cos(Math.PI / 6)
+const CY = 0.5
 
 export const C = {
   bg: '#eef2f7',
@@ -39,17 +48,27 @@ export const PROTO_COLOR: Record<string, string> = {
   other: '#8a96a8',
 }
 
+// decal colour per item kind
+export const KIND_COLOR: Record<string, string> = {
+  route: '#22a06b',
+  function: '#55667d',
+  class: '#7b4fe0',
+  method: '#8a96a8',
+  query: '#2f5fd0',
+  config: '#0f8fa8',
+}
+
 type Kind = 'box' | 'server' | 'cyl' | 'stack' | 'slab' | 'client' | 'disc'
 export interface RoleShape {
   kind: Kind
-  w: number // world extent along x
-  d: number // world extent along y
-  h: number // height
-  color: string // accent (icon) colour
+  w: number
+  d: number
+  h: number
+  color: string
   glyph: string
   weight: number
-  ax: number // anchor cell x
-  ay: number // anchor cell y
+  ax: number
+  ay: number
 }
 export const ROLE: Record<string, RoleShape> = {
   internet: { kind: 'disc', w: 46, d: 46, h: 7, color: '#7a8699', glyph: 'NET', weight: 3, ax: -10, ay: 0 },
@@ -64,7 +83,6 @@ export const ROLE: Record<string, RoleShape> = {
 export const shapeOf = (r: string): RoleShape =>
   ROLE[r] ?? { kind: 'box', w: 30, d: 30, h: 28, color: '#738096', glyph: r.slice(0, 3).toUpperCase(), weight: 2, ax: 0, ay: -6 }
 
-const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
 const SANS = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
 const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace'
 const LINK_GRACE_MS = 30000
@@ -72,25 +90,27 @@ const TOP_PAD = 100
 const BOTTOM_PAD = 170
 const LEFT_PAD = 210
 const RIGHT_PAD = 40
-const FS = 92 // file tile spacing (world)
-
-type Level = 'red' | 'amber'
+const SEP = '\u001f'
+const FS = 92 // file spacing (world); each level is LEVEL_K smaller
+const LEVEL_K = 0.64
+const spacing = (d: number) => FS * Math.pow(LEVEL_K, d - 1)
+const tileBase = (d: number) => 30 * Math.pow(LEVEL_K, d - 1)
+const READ_PX = 128 // min screen distance between horizontally adjacent tiles at the open level
 
 interface Body {
   id: string
   node: FleetNode
   pending: boolean
-  x: number // displayed world position (eased)
+  x: number
   y: number
-  gx: number // grid target
+  gx: number
   gy: number
-  ox: number // make-room displacement (eased)
+  ox: number
   oy: number
   pinned: boolean
   ta: number
   alpha: number
   ex: number
-  open: boolean
   bootStart: number
   bootPhase: string
   lastIssueCount: number
@@ -108,14 +128,6 @@ interface LinkR {
   present: boolean
   goneAt: number
   nudge: number
-}
-
-interface FileLayout {
-  role: CodemapRole
-  entry: string
-  R: number // platform half-size (world)
-  pos: Map<string, { x: number; y: number; h: number; s: number }>
-  pathTo: Map<string, [string, string][]>
 }
 
 interface AgentR {
@@ -136,7 +148,42 @@ interface Ghost {
   t: number
 }
 
-type Hit = { kind: 'node' | 'badge' | 'file'; id: string; file?: string; sx: number; sy: number; rs: number }
+type P2 = { x: number; y: number }
+
+interface LevelLay {
+  pos: Map<string, P2>
+  ext: Map<string, number>
+  sub: Map<string, LevelLay>
+  R: number
+}
+
+interface Vis {
+  b: Body
+  it: TItem
+  keys: string[]
+  fk: string
+  x: number
+  y: number
+  s: number
+  h: number
+  a: number // parent openness (visibility)
+  e: number // own openness
+  d: number
+  R: number // platform half-size when open
+}
+
+interface Plat {
+  b: Body
+  fk: string
+  keys: string[]
+  x: number
+  y: number
+  R: number
+  d: number // depth of the tiles on it
+  e: number
+}
+
+type Hit = { kind: 'node' | 'item' | 'badge'; id: string; keys?: string[]; sx: number; sy: number; rs: number; g?: { x: number; y: number; R: number } }
 
 interface Props {
   fleet: Fleet | null
@@ -147,14 +194,16 @@ interface Props {
   reduced: boolean
   rightInset: number
   showControl: boolean
-  selected: Sel | null
+  selected: IsoSel | null
   focus: { id: string; n: number } | null
-  onSelect: (s: Sel | null) => void
+  onSelect: (s: IsoSel | null) => void
   onDropRole: (role: string, x: number, y: number) => void
 }
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v)
 const snap = (v: number) => Math.round(v / GRID) * GRID
+const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
+const startsWith = (a: string[], pre: string[]) => pre.length <= a.length && pre.every((x, i) => x === a[i])
 
 const rgbCache = new Map<string, [number, number, number]>()
 function rgb(hex: string): [number, number, number] {
@@ -177,11 +226,6 @@ function rgba(hex: string, a: number): string {
   const [r, g, b] = rgb(hex)
   return `rgba(${r},${g},${b},${a})`
 }
-function levelOf(issues: FleetIssue[]): Level | null {
-  let top = 0
-  for (const i of issues) top = Math.max(top, SEV_RANK[i.severity] ?? 1)
-  return top === 0 ? null : top >= 3 ? 'red' : 'amber'
-}
 function truncate(ctx: CanvasRenderingContext2D, s: string, max: number): string {
   if (ctx.measureText(s).width <= max) return s
   let lo = 0
@@ -198,74 +242,71 @@ function hash(s: string): number {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
   return h >>> 0
 }
+const fmtRps = (r: number) => (r >= 100 ? `${Math.round(r)}` : r >= 10 ? r.toFixed(1) : r.toFixed(2).replace(/0$/, ''))
 
-// File tiles on a grid around the entry file: port-owning files first (on the
-// four sides), then by size. Height scales with loc.
-const RING: [number, number][] = [
-  [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1],
-  [2, 0], [0, 2], [-2, 0], [0, -2], [2, 1], [1, 2], [-2, -1], [-1, -2], [2, -1], [-1, 2], [-2, 1], [1, -2],
-]
-const layoutCache = new Map<string, FileLayout>()
-function layoutFor(role: string, cr: CodemapRole): FileLayout {
-  const key = `${role}|${cr.files.map((f) => f.path).join(',')}|${cr.edges.length}`
-  const hit = layoutCache.get(key)
+// Grid slots: centre, then Chebyshev rings (ring 1 in a fixed, balanced order).
+const SLOTS: [number, number][] = (() => {
+  const out: [number, number][] = [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]
+  for (let r = 2; r <= 7; r++) {
+    const ring: [number, number][] = []
+    for (let x = -r; x <= r; x++) for (let y = -r; y <= r; y++) if (Math.max(Math.abs(x), Math.abs(y)) === r) ring.push([x, y])
+    ring.sort((a, b) => Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]))
+    out.push(...ring)
+  }
+  return out
+})()
+
+const KIND_ORDER: Record<string, number> = { route: 0, class: 1, function: 2, query: 3, method: 4, config: 5 }
+const slotCache = new Map<string, Map<string, P2>>()
+function baseSlots(prefix: string, items: TItem[], d: number, tree: CodeTree): Map<string, P2> {
+  const sig = prefix + '#' + items.map((i) => i.key).join(',')
+  const hit = slotCache.get(sig)
   if (hit) return hit
-  const portFiles = new Set(cr.ports.map((p) => p.file))
-  const entry = cr.ports.find((p) => p.dir === 'in')?.file ?? cr.files.slice().sort((a, b) => b.loc - a.loc)[0].path
-  const others = cr.files
-    .filter((f) => f.path !== entry)
-    .sort((a, b) => Number(portFiles.has(b.path)) - Number(portFiles.has(a.path)) || b.loc - a.loc)
-  const hOf = (loc: number) => clamp(6 + Math.sqrt(loc) * 1.4, 7, 30)
-  const pos = new Map<string, { x: number; y: number; h: number; s: number }>()
-  const ef = cr.files.find((f) => f.path === entry)
-  pos.set(entry, { x: 0, y: 0, h: hOf(ef?.loc ?? 50), s: 38 })
-  let maxRing = 0
-  others.slice(0, RING.length).forEach((f, i) => {
-    const [cx, cy] = RING[i]
-    maxRing = Math.max(maxRing, Math.abs(cx), Math.abs(cy))
-    pos.set(f.path, { x: cx * FS, y: cy * FS, h: hOf(f.loc), s: 30 })
+  let order: TItem[]
+  if (d === 1) {
+    const portFiles = new Set(tree.role.ports.map((p) => p.file))
+    const entry = items.find((i) => i.key === tree.entry)
+    const rest = items
+      .filter((i) => i !== entry)
+      .sort((a, b) => Number(portFiles.has(b.key)) - Number(portFiles.has(a.key)) || (b.fileInfo?.loc ?? 0) - (a.fileInfo?.loc ?? 0))
+    order = entry ? [entry, ...rest] : rest
+  } else {
+    order = items.slice().sort((a, b) => (KIND_ORDER[a.kind] ?? 6) - (KIND_ORDER[b.kind] ?? 6) || (a.sym?.line ?? 0) - (b.sym?.line ?? 0))
+  }
+  const sp = spacing(d)
+  const m = new Map<string, P2>()
+  order.forEach((it, i) => {
+    const [cx, cy] = SLOTS[Math.min(i, SLOTS.length - 1)]
+    m.set(it.key, { x: cx * sp, y: cy * sp })
   })
-  const adj = new Map<string, string[]>()
-  for (const e of cr.edges) {
-    if (!adj.has(e.from)) adj.set(e.from, [])
-    adj.get(e.from)!.push(e.to)
-  }
-  const prev = new Map<string, string>()
-  const q = [entry]
-  const seen = new Set([entry])
-  while (q.length) {
-    const cur = q.shift()!
-    for (const nx of adj.get(cur) ?? []) {
-      if (seen.has(nx)) continue
-      seen.add(nx)
-      prev.set(nx, cur)
-      q.push(nx)
-    }
-  }
-  const pathTo = new Map<string, [string, string][]>()
-  for (const f of cr.files) {
-    const out: [string, string][] = []
-    let c = f.path
-    while (prev.has(c)) {
-      const p = prev.get(c)!
-      out.unshift([p, c])
-      c = p
-    }
-    pathTo.set(f.path, out)
-  }
-  const lay = { role: cr, entry, R: Math.max(1, maxRing) * FS + 46, pos, pathTo }
-  layoutCache.set(key, lay)
-  return lay
+  if (slotCache.size > 500) slotCache.clear()
+  slotCache.set(sig, m)
+  return m
+}
+
+function tileSize(it: TItem, d: number, tree: CodeTree): number {
+  const b = tileBase(d)
+  if (it.kind === 'file') return it.key === tree.entry ? b * 1.27 : b
+  if (it.kind === 'class') return b * 1.12
+  if (it.kind === 'config') return b * 0.9
+  return b
+}
+function tileHeight(it: TItem, d: number, tree: CodeTree): number {
+  const sc = Math.pow(LEVEL_K, d - 1)
+  if (it.kind === 'file') return clamp(6 + Math.sqrt(it.fileInfo?.loc ?? 40) * 1.4, 7, 30)
+  if (it.kind === 'config') return 5 * sc + 2
+  const r = routeOf(tree, it)
+  if (r) return (7 + Math.log10(1 + Math.max(0, r.rps)) * 9) * sc + 2
+  const lines = it.sym ? Math.max(1, it.sym.endLine - it.sym.line + 1) : 10
+  return clamp(5 + Math.sqrt(lines) * 2.2, 6, 26) * sc + 2
 }
 
 // Axis-aligned route on the ground: along x, then y, then x (Z-shape).
-type P2 = { x: number; y: number }
 function route(a: P2, b: P2, nudge: number): P2[] {
   if (Math.abs(a.y - b.y) < 0.5 || Math.abs(a.x - b.x) < 0.5) return [a, b]
   const mx = (a.x + b.x) / 2 + nudge
   return [a, { x: mx, y: a.y }, { x: mx, y: b.y }, b]
 }
-// Offset a polyline sideways on the ground (right-hand side of travel).
 function offsetPoly(pts: P2[], o: number): P2[] {
   const n = pts.length
   const norm = (i: number) => {
@@ -280,6 +321,19 @@ function offsetPoly(pts: P2[], o: number): P2[] {
     const ny = (n0?.y ?? 0) + (n1?.y ?? 0)
     return { x: p.x + nx * o, y: p.y + ny * o }
   })
+}
+
+/** Which symbols own an outbound client (pg/redis): named for the client first, else
+ *  the query symbols. Attached to the deepest visible owner; none → the file. */
+function clientOwners(items: TItem[], proto: string): TItem[] {
+  const all: TItem[] = []
+  const walk = (xs: TItem[]) => { for (const x of xs) { all.push(x); walk(x.children) } }
+  walk(items)
+  const named = proto === 'postgres' ? /postgres|\bpool\b|\bpg\b/i : proto === 'redis' ? /redis|client/i : null
+  if (!named) return []
+  const byName = all.filter((x) => x.kind !== 'query' && x.kind !== 'config' && named.test(x.sym?.name ?? x.label))
+  if (byName.length) return byName.filter((x) => !byName.some((y) => y !== x && startsWith(chainOf(x), chainOf(y))))
+  return proto === 'postgres' ? all.filter((x) => x.kind === 'query' && !/schema/i.test(x.label)) : []
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +365,6 @@ export default function IsoView(props: Props) {
       return false
     }
     const freeCell = (cx: number, cy: number, self: string) => {
-      // nearest free grid cell to (cx,cy); prefer spreading along y (rows)
       const cands: [number, number, number][] = []
       for (let dx = -8; dx <= 8; dx++) for (let dy = -8; dy <= 8; dy++) cands.push([dx, dy, Math.abs(dx) * 1.35 + Math.abs(dy) + (dy < 0 ? 0.01 : 0)])
       cands.sort((p, q) => p[2] - q[2])
@@ -327,12 +380,10 @@ export default function IsoView(props: Props) {
       const saved = n.id.startsWith('pending-') ? null : loadPos(n.label)
       if (saved) return { x: snap(saved.x), y: snap(saved.y), pin: true }
       const st = shapeOf(n.role)
-      const f = freeCell(st.ax * GRID, st.ay * GRID, n.id)
-      return { ...f, pin: false }
+      return { ...freeCell(st.ax * GRID, st.ay * GRID, n.id), pin: false }
     }
 
     const seen = new Set<string>()
-    // place pinned/saved ones first so auto-placed nodes avoid them
     const order = fleet.nodes.slice().sort((a, b) => Number(!!loadPos(b.label)) - Number(!!loadPos(a.label)))
     for (const n of order) {
       let b = bodies.get(n.id)
@@ -351,7 +402,7 @@ export default function IsoView(props: Props) {
         const p = place(n)
         b = {
           id: n.id, node: n, pending: n.id.startsWith('pending-'), x: p.x, y: p.y, gx: p.x, gy: p.y, ox: 0, oy: 0,
-          pinned: p.pin, ta: 0, alpha: 0, ex: 0, open: false, bootStart: performance.now(), bootPhase: n.status,
+          pinned: p.pin, ta: 0, alpha: 0, ex: 0, bootStart: performance.now(), bootPhase: n.status,
           lastIssueCount: (n.issues ?? []).length,
         }
         bodies.set(n.id, b)
@@ -410,7 +461,10 @@ export default function IsoView(props: Props) {
     let autoFit = true
     let focusN = -1
     let panTo: { x: number; y: number } | null = null
-    let expandedId: string | null = null
+    let openSig = ''
+
+    const exMap = new Map<string, number>() // openness per item (fk)
+    const phases = new Map<string, number>() // flow phase per branch / call edge
 
     const pointers = new Map<number, { x: number; y: number }>()
     let press: { x: number; y: number; hit: Hit | null; moved: boolean; lastX: number; lastY: number; gdx: number; gdy: number } | null = null
@@ -421,7 +475,8 @@ export default function IsoView(props: Props) {
     let hoverLink: LinkR | null = null
     let hits: Hit[] = []
     let visibleLinks = new Set<LinkR>()
-    let routes = new Map<LinkR, { A: P2; B: P2; pts: P2[] }>()
+    let routes = new Map<LinkR, P2[]>()
+    let visByNode = new Map<string, Map<string, Vis>>()
     const agentsR = new Map<string, AgentR>()
 
     const resize = () => {
@@ -436,62 +491,79 @@ export default function IsoView(props: Props) {
     resize()
     window.addEventListener('resize', resize)
 
-    // world (x,y,z) → screen
     const P = (x: number, y: number, z = 0) => ({ x: (x - y) * CX * view.k + view.tx, y: ((x + y) * CY - z) * view.k + view.ty })
-    // screen → ground plane
     const toGround = (sx: number, sy: number) => {
       const a = (sx - view.tx) / view.k / CX
       const b = (sy - view.ty) / view.k / CY
       return { x: (a + b) / 2, y: (b - a) / 2 }
     }
     const zoomAround = (sx: number, sy: number, nk: number) => {
-      const k = clamp(nk, 0.25, 4)
+      const k = clamp(nk, 0.25, 6)
       view.tx = sx - ((sx - view.tx) * k) / view.k
       view.ty = sy - ((sy - view.ty) * k) / view.k
       view.k = k
     }
-    const layoutOf = (b: Body): FileLayout | null => {
-      const cr = codeFor(propsRef.current.codemap, b.node.role)
-      return cr ? layoutFor(b.node.role, cr) : null
-    }
+    const treeOf = (b: Body): CodeTree | null => treeFor(propsRef.current.codemap, b.node.role)
     const bx = (b: Body) => b.x + b.ox
     const by = (b: Body) => b.y + b.oy
+    const exOf = (fk: string) => exMap.get(fk) ?? 0
 
-    const fitTarget = () => {
-      const bodies = bodiesRef.current
-      if (bodies.size === 0) return null
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-      for (const b of bodies.values()) {
-        const st = shapeOf(b.node.role)
-        const lay = b.ex > 0.01 ? layoutOf(b) : null
-        const r = lay ? lay.R * b.ex + Math.max(st.w, st.d) / 2 * (1 - b.ex) : Math.max(st.w, st.d) / 2
-        const X = bx(b), Y = by(b)
-        // projected bounds of the footprint diamond (screen units at k=1)
-        const u = (X - Y) * CX, v = (X + Y) * CY
-        const hu = 2 * r * CX, hv = 2 * r * CY
-        x0 = Math.min(x0, u - hu - 50); x1 = Math.max(x1, u + hu + 50)
-        y0 = Math.min(y0, v - hv - st.h - 62); y1 = Math.max(y1, v + hv + 20)
+    // ---- recursive layout: positions relative to the parent centre ----------------
+    const levelLayout = (prefix: string, items: TItem[], d: number, tree: CodeTree): LevelLay => {
+      const base = baseSlots(prefix, items, d, tree)
+      const ext = new Map<string, number>()
+      const sub = new Map<string, LevelLay>()
+      for (const it of items) {
+        const s = tileSize(it, d, tree)
+        const e = it.children.length ? exOf(prefix + SEP + it.key) : 0
+        let x = s / 2 + 2
+        if (e > 0.001) {
+          const L = levelLayout(prefix + SEP + it.key, it.children, d + 1, tree)
+          sub.set(it.key, L)
+          x = L.R * e + (s / 2) * (1 - e)
+        }
+        ext.set(it.key, x)
       }
-      const aw = Math.max(200, W - LEFT_PAD - Math.max(RIGHT_PAD, propsRef.current.rightInset))
-      const ah = Math.max(160, H - TOP_PAD - BOTTOM_PAD)
-      const k = clamp(Math.min(aw / (x1 - x0), ah / (y1 - y0)), 0.3, 1.5)
-      return { k, tx: LEFT_PAD + aw / 2 - ((x0 + x1) / 2) * k, ty: TOP_PAD + ah / 2 - ((y0 + y1) / 2) * k }
+      const pos = new Map<string, P2>()
+      for (const [k, v] of base) pos.set(k, { x: v.x, y: v.y })
+      // An open child "inserts space" in the grid: every sibling beyond its row/column
+      // slides outward by the child's growth, so relative layout (and spacing) is kept.
+      const margin = spacing(d) * 0.42
+      for (const c of items) {
+        const ec = ext.get(c.key)!
+        const grow = ec - (tileSize(c, d, tree) / 2 + 2)
+        if (grow <= 0.5) continue
+        const shift = grow + margin * Math.min(1, grow / spacing(d))
+        const pc = base.get(c.key)!
+        for (const sib of items) {
+          if (sib === c) continue
+          const b0 = base.get(sib.key)!
+          const ps = pos.get(sib.key)!
+          if (b0.x > pc.x + 0.5) ps.x += shift
+          else if (b0.x < pc.x - 0.5) ps.x -= shift
+          if (b0.y > pc.y + 0.5) ps.y += shift
+          else if (b0.y < pc.y - 0.5) ps.y -= shift
+        }
+      }
+      let R = 0
+      for (const it of items) {
+        const p = pos.get(it.key)!
+        R = Math.max(R, Math.max(Math.abs(p.x), Math.abs(p.y)) + ext.get(it.key)!)
+      }
+      return { pos, ext, sub, R: R + spacing(d) * 0.5 }
     }
 
-    // Ground attachment point of a link end; with the node expanded, the file
-    // that owns that port.
-    const endPos = (b: Body, l: LinkR, outgoing: boolean): P2 & { file: string | null } => {
-      const base = { x: bx(b), y: by(b) }
-      if (b.ex < 0.01) return { ...base, file: null }
-      const lay = layoutOf(b)
-      if (!lay) return { ...base, file: null }
-      const dir = outgoing ? 'out' : 'in'
-      const pe = lay.role.ports.find((p) => p.port === l.data.port && p.dir === dir) ?? lay.role.ports.find((p) => p.port === l.data.port)
-      const fp = pe ? lay.pos.get(pe.file) : undefined
-      if (!pe || !fp) return { ...base, file: null }
-      return { x: base.x + fp.x * b.ex, y: base.y + fp.y * b.ex, file: pe.file }
+    const nearestVisible = (nodeId: string, chain: string[]): Vis | null => {
+      const m = visByNode.get(nodeId)
+      if (!m) return null
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const v = m.get(chain[i])
+        if (v && v.a > 0.5) return v
+      }
+      return null
     }
 
+    // ---- hit testing ---------------------------------------------------------------
     const segDist = (px: number, py: number, ax: number, ay: number, bx2: number, by2: number) => {
       const dx = bx2 - ax, dy = by2 - ay
       const L = dx * dx + dy * dy || 1
@@ -499,9 +571,12 @@ export default function IsoView(props: Props) {
       return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
     }
     const hitTest = (x: number, y: number): Hit | null => {
+      const g = toGround(x, y)
       for (let i = hits.length - 1; i >= 0; i--) {
         const h = hits[i]
-        if (Math.hypot(x - h.sx, y - h.sy) <= h.rs + 3) return h
+        if (h.g) {
+          if (Math.max(Math.abs(g.x - h.g.x), Math.abs(g.y - h.g.y)) <= h.g.R) return h
+        } else if (Math.hypot(x - h.sx, y - h.sy) <= h.rs + 3) return h
       }
       return null
     }
@@ -511,7 +586,7 @@ export default function IsoView(props: Props) {
       for (const l of visibleLinks) {
         const r = routes.get(l)
         if (!r || !l.present) continue
-        const s = r.pts.map((p) => P(p.x, p.y))
+        const s = r.map((p) => P(p.x, p.y))
         for (let i = 0; i < s.length - 1; i++) {
           const d = segDist(x, y, s[i].x, s[i].y, s[i + 1].x, s[i + 1].y)
           if (d < bd) { bd = d; best = l }
@@ -557,19 +632,19 @@ export default function IsoView(props: Props) {
       }
       if (!press) {
         hover = hitTest(p.x, p.y)
-        hoverLink = hover ? null : linkAt(p.x, p.y)
+        hoverLink = hover && !hover.g ? null : linkAt(p.x, p.y)
+        if (hoverLink && hover?.g) hover = null
         canvas.style.cursor = hover || hoverLink ? 'pointer' : 'grab'
         return
       }
       if (!press.moved && Math.hypot(p.x - press.x, p.y - press.y) > 3) {
         press.moved = true
         const h = press.hit
-        if (h?.kind === 'node') dragBody = bodiesRef.current.get(h.id) ?? null
+        if (h?.kind === 'node' && !h.g) dragBody = bodiesRef.current.get(h.id) ?? null
         canvas.style.cursor = 'grabbing'
       }
       if (!press.moved) return
       if (dragBody) {
-        // slide across the ground, snapping to the iso grid
         const g = toGround(p.x, p.y)
         dragBody.gx = snap(g.x + press.gdx)
         dragBody.gy = snap(g.y + press.gdy)
@@ -591,10 +666,15 @@ export default function IsoView(props: Props) {
       if (press && !press.moved) {
         const h = press.hit
         const Pp = propsRef.current
-        if (h?.kind === 'file' || h?.kind === 'badge') Pp.onSelect({ kind: 'node', id: h.id, file: h.file })
-        else if (h?.kind === 'node') {
-          const same = Pp.selected?.kind === 'node' && Pp.selected.id === h.id
-          Pp.onSelect(same ? null : { kind: 'node', id: h.id })
+        const cur = Pp.selected?.kind === 'node' ? Pp.selected : null
+        if (h?.kind === 'badge') Pp.onSelect({ kind: 'node', id: h.id, path: h.keys ?? [] })
+        else if (h?.kind === 'item' && h.keys) {
+          // clicking the current item steps back up one level; anything else opens/selects it
+          if (cur && cur.id === h.id && sameKeys(cur.path ?? [], h.keys)) Pp.onSelect({ kind: 'node', id: h.id, path: h.keys.slice(0, -1) })
+          else Pp.onSelect({ kind: 'node', id: h.id, path: h.keys })
+        } else if (h?.kind === 'node') {
+          if (cur && cur.id === h.id) Pp.onSelect((cur.path ?? []).length ? { kind: 'node', id: h.id, path: [] } : null)
+          else Pp.onSelect({ kind: 'node', id: h.id })
         } else {
           const l = linkAt(press.x, press.y)
           Pp.onSelect(l ? { kind: 'link', id: l.id } : null)
@@ -653,7 +733,6 @@ export default function IsoView(props: Props) {
       right: tint ? mix(C.right, tint, 0.16 * t) : C.right,
     })
     type Faces = ReturnType<typeof faces>
-    // axis-aligned box: centre (x,y), base z0
     const box = (x: number, y: number, z0: number, w: number, d: number, h: number, f: Faces) => {
       const x0 = x - w / 2, x1 = x + w / 2, y0 = y - d / 2, y1 = y + d / 2, z1 = z0 + h
       ctx.lineWidth = 0.8
@@ -666,7 +745,6 @@ export default function IsoView(props: Props) {
       poly([P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1)])
       ctx.fillStyle = f.top; ctx.fill(); ctx.stroke()
     }
-    // a decal lying on a horizontal plane at height z (text/icons read flat)
     const onPlane = (x: number, y: number, z: number, fn: () => void) => {
       const c = P(x, y, z)
       ctx.save()
@@ -675,12 +753,11 @@ export default function IsoView(props: Props) {
       ctx.restore()
     }
     const topIcon = (x: number, y: number, z: number, s: number, col: string, glyph: string, a: number) => {
-      // inset coloured "service icon" diamond + glyph on the top face
       const h = s / 2
       poly([P(x - h, y - h, z), P(x + h, y - h, z), P(x + h, y + h, z), P(x - h, y + h, z)])
       ctx.fillStyle = rgba(col, a)
       ctx.fill()
-      if (s * view.k > 15) {
+      if (glyph && s * view.k > 15) {
         onPlane(x, y, z, () => {
           ctx.fillStyle = 'rgba(255,255,255,0.96)'
           ctx.font = `700 ${Math.max(6, Math.min(11, s * 0.34))}px ${SANS}`
@@ -690,7 +767,16 @@ export default function IsoView(props: Props) {
         })
       }
     }
-    // ellipse = projected circle on the ground plane at height z
+    const lockGlyph = (x: number, y: number, z: number, s: number) => {
+      onPlane(x, y, z, () => {
+        const u = s * 0.18
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = u * 0.55
+        ctx.beginPath(); ctx.arc(0, -u * 0.55, u * 0.75, Math.PI, 0); ctx.stroke()
+        ctx.fillRect(-u * 1.15, -u * 0.6, u * 2.3, u * 1.8)
+      })
+    }
     const groundEllipse = (x: number, y: number, z: number, r: number) => {
       const c = P(x, y, z)
       return { cx: c.x, cy: c.y, rx: r * Math.SQRT2 * CX * view.k, ry: r * Math.SQRT2 * CY * view.k }
@@ -722,12 +808,18 @@ export default function IsoView(props: Props) {
       ctx.fill(); ctx.stroke()
     }
     const shadow = (x: number, y: number, w: number, d: number, h: number, a: number) => {
-      // soft cast shadow toward +x (screen down-right); light from top-left
       const s = h * 0.45
       const pts = [P(x - w / 2, y - d / 2), P(x + w / 2 + s, y - d / 2), P(x + w / 2 + s, y + d / 2 + 3), P(x - w / 2, y + d / 2 + 3)]
       ctx.fillStyle = `rgba(36,52,80,${0.13 * a})`
       poly(pts)
       ctx.fill()
+    }
+    // "expandable" affordance: a lid seam just under the top edge
+    const seam = (x: number, y: number, w: number, d: number, z: number) => {
+      ctx.strokeStyle = 'rgba(40,56,84,0.45)'
+      ctx.lineWidth = 1
+      const a = P(x - w / 2, y + d / 2, z), b = P(x + w / 2, y + d / 2, z), c = P(x + w / 2, y - d / 2, z)
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke()
     }
 
     const drawBlock = (n: FleetNode, x: number, y: number, z0: number, tint: string | null, ta: number, a: number, lidLift: number) => {
@@ -764,7 +856,6 @@ export default function IsoView(props: Props) {
           for (let i = 0; i < 3; i++) {
             const zz = z0 + i * (sh + 3) + (i === 2 ? lidLift : 0)
             box(x, y, zz, st.w - i * 2, st.d - i * 2, sh, f)
-            // slab front stripe in accent colour
             ctx.strokeStyle = rgba(st.color, 0.75)
             ctx.lineWidth = 1.4
             const yy = y + (st.d - i * 2) / 2
@@ -776,7 +867,6 @@ export default function IsoView(props: Props) {
         }
         case 'server': {
           box(x, y, z0, st.w, st.d, st.h - 4, f)
-          // rack units on the front-left face + status LEDs
           const yy = y + st.d / 2
           for (let i = 1; i < 4; i++) {
             const zz = z0 + ((st.h - 4) * i) / 4
@@ -787,14 +877,12 @@ export default function IsoView(props: Props) {
             ctx.fillStyle = running ? st.color : '#9aa5b5'
             ctx.fillRect(led.x - 1.5, led.y - 1, 3, 2)
           }
-          // lid
           box(x, y, z0 + st.h - 4 + lidLift, st.w, st.d, 4, f)
           topIcon(x, y, z0 + st.h + lidLift, st.w * 0.55, st.color, st.glyph, 1)
           break
         }
         case 'client': {
           box(x, y, z0, st.w, st.d, st.h, f)
-          // screen on the front-left face
           const yy = y + st.d / 2
           poly([P(x - st.w / 2 + 5, yy, z0 + 8), P(x + st.w / 2 - 5, yy, z0 + 8), P(x + st.w / 2 - 5, yy, z0 + st.h - 5), P(x - st.w / 2 + 5, yy, z0 + st.h - 5)])
           ctx.fillStyle = mix('#33415a', st.color, 0.3)
@@ -817,6 +905,7 @@ export default function IsoView(props: Props) {
 
     const intensity = (bps: number) => clamp(Math.log10(1 + bps / 1024) / 3.5, 0, 1)
     const laneSpeed = (bps: number) => (bps < 1 ? 0 : 12 + 40 * intensity(bps))
+    const rpsIntensity = (rps: number) => clamp(Math.log10(1 + rps) / 2.6, 0, 1)
     const strokePath = (pts: P2[], z = 0) => {
       ctx.beginPath()
       pts.forEach((p, i) => {
@@ -826,23 +915,21 @@ export default function IsoView(props: Props) {
       })
       ctx.stroke()
     }
-    const flowLane = (pts: P2[], bps: number, col: string, phase: number, alpha: number) => {
-      if (bps < 1) return
-      const it = intensity(bps)
-      const lane = offsetPoly(pts, 4.2)
+    const lane = (pts: P2[], it: number, col: string, phase: number, alpha: number, off: number, width: number) => {
+      if (it <= 0) return
       ctx.setLineDash([5, 24 - 14 * it])
       ctx.lineDashOffset = -phase
       ctx.lineCap = 'butt'
-      ctx.lineWidth = 2.6
+      ctx.lineWidth = width
       ctx.strokeStyle = rgba(col, (0.55 + 0.45 * it) * alpha)
-      strokePath(lane)
+      strokePath(off ? offsetPoly(pts, off) : pts)
       ctx.setLineDash([])
       ctx.lineDashOffset = 0
     }
 
     const drawTooltip = (lines: { t: string; c?: string }[], anchor: { x: number; y: number; r: number }, side: 'node' | 'cursor') => {
       ctx.font = `400 11px ${MONO}`
-      const maxW = Math.min(360, W - 24)
+      const maxW = Math.min(380, W - 24)
       const shown = lines.map((l) => ({ t: truncate(ctx, l.t, maxW - 20), c: l.c }))
       const w = Math.min(maxW, Math.max(...shown.map((l) => ctx.measureText(l.t).width)) + 20)
       const h = shown.length * 16 + 12
@@ -894,46 +981,121 @@ export default function IsoView(props: Props) {
       const sel = Pp.selected
       const ease = (rate: number) => (red ? 1 : 1 - Math.exp(-dt * rate))
 
-      const want = sel?.kind === 'node' && bodies.has(sel.id) && codeFor(Pp.codemap, bodies.get(sel.id)!.node.role) ? sel.id : null
-      if (want !== expandedId) {
-        expandedId = want
-        for (const b of bodies.values()) b.open = b.id === want
+      // -- open chain from the selection: the server + every item with children on the path
+      const selNodeId = sel?.kind === 'node' && bodies.has(sel.id) ? sel.id : null
+      const selBody = selNodeId ? bodies.get(selNodeId)! : null
+      const selTree = selBody ? treeOf(selBody) : null
+      const selPath = sel?.kind === 'node' ? sel.path ?? [] : []
+      const openFks = new Set<string>()
+      let selFk: string | null = null
+      if (selBody && selTree) {
+        openFks.add(selBody.id)
+        let level = selTree.files
+        let fk = selBody.id
+        for (const key of selPath) {
+          const it = level.find((x) => x.key === key)
+          if (!it) break
+          fk += SEP + key
+          selFk = fk
+          if (!it.children.length) break
+          openFks.add(fk)
+          level = it.children
+        }
       }
+      const sig = [...openFks].join('|')
+      if (sig !== openSig) {
+        openSig = sig
+        autoFit = true // opening/closing a level re-frames the view
+      }
+      for (const fk of openFks) if (!exMap.has(fk)) exMap.set(fk, 0)
+      for (const [fk, v] of exMap) {
+        const nv = v + ((openFks.has(fk) ? 1 : 0) - v) * ease(7)
+        if (nv < 0.001 && !openFks.has(fk)) exMap.delete(fk)
+        else exMap.set(fk, nv)
+      }
+
+      // -- per-server layout of the open tree ---------------------------------------
+      const nodeLay = new Map<string, { lay: LevelLay; tree: CodeTree }>()
       let dimAll = 0
-      const exp = expandedId ? bodies.get(expandedId) : undefined
-      const expLay = exp ? layoutOf(exp) : null
       for (const b of bodies.values()) {
-        b.ex += ((b.open ? 1 : 0) - b.ex) * ease(7)
-        if (b.ex < 0.001) b.ex = 0
+        b.ex = exOf(b.id)
         dimAll = Math.max(dimAll, b.ex)
-        // glide to the snapped grid target
+        const tree = b.ex > 0.001 ? treeOf(b) : null
+        if (tree) nodeLay.set(b.id, { lay: levelLayout(b.id, tree.files, 1, tree), tree })
         b.x += (b.gx - b.x) * ease(14)
         b.y += (b.gy - b.y) * ease(14)
-        // make room around an opened block (visual only, never persisted)
+      }
+      const nodeR = (b: Body) => {
+        const st = shapeOf(b.node.role)
+        const fr = Math.max(st.w, st.d) / 2
+        const nl = nodeLay.get(b.id)
+        return nl ? nl.lay.R * b.ex + fr * (1 - b.ex) : fr
+      }
+      // make room around opened servers (visual only, never persisted): servers beyond
+      // its row/column slide outward by how much it grew
+      for (const b of bodies.values()) {
         let tx = 0, ty = 0
-        if (exp && expLay && b !== exp) {
-          const st = shapeOf(b.node.role)
-          const need = expLay.R + Math.max(st.w, st.d) / 2 + 90
-          const dx = b.gx - exp.gx, dy = b.gy - exp.gy
-          const cheb = Math.max(Math.abs(dx), Math.abs(dy))
-          if (cheb < need) {
-            // push out along the dominant grid axis
-            if (Math.abs(dx) >= Math.abs(dy) && dx !== 0) tx = Math.sign(dx) * (need - Math.abs(dx))
-            else ty = (Math.sign(dy) || 1) * (need - Math.abs(dy))
-          }
+        for (const o of bodies.values()) {
+          if (o === b || o.ex < 0.01 || !nodeLay.has(o.id)) continue
+          const so = shapeOf(o.node.role)
+          const shift = Math.max(0, nodeR(o) - Math.max(so.w, so.d) / 2) + 70 * o.ex
+          if (b.gx > o.gx + 0.5) tx += shift
+          else if (b.gx < o.gx - 0.5) tx -= shift
+          if (b.gy > o.gy + 0.5) ty += shift
+          else if (b.gy < o.gy - 0.5) ty -= shift
         }
         b.ox += (tx - b.ox) * ease(7)
         b.oy += (ty - b.oy) * ease(7)
       }
 
+      // -- visible items + platforms (world positions) -----------------------------
+      const plats: Plat[] = []
+      const visList: Vis[] = []
+      visByNode = new Map()
+      for (const b of bodies.values()) {
+        const nl = nodeLay.get(b.id)
+        if (!nl || b.ex < 0.01) continue
+        const m = new Map<string, Vis>()
+        visByNode.set(b.id, m)
+        plats.push({ b, fk: b.id, keys: [], x: bx(b), y: by(b), R: nodeR(b), d: 1, e: b.ex })
+        const walk = (lay: LevelLay, items: TItem[], cx: number, cy: number, pe: number, d: number, keys: string[], prefix: string) => {
+          for (const it of items) {
+            const rel = lay.pos.get(it.key)
+            if (!rel) continue
+            const fk = prefix + SEP + it.key
+            const e = it.children.length ? exOf(fk) : 0
+            const s = tileSize(it, d, nl.tree) * (0.4 + 0.6 * pe)
+            const sub = lay.sub.get(it.key)
+            const R = sub ? sub.R * e + (s / 2) * (1 - e) : s / 2
+            const v: Vis = { b, it, keys: [...keys, it.key], fk, x: cx + rel.x * pe, y: cy + rel.y * pe, s, h: tileHeight(it, d, nl.tree) * pe, a: pe, e, d, R }
+            m.set(it.key, v)
+            visList.push(v)
+            if (sub && e > 0.01) {
+              plats.push({ b, fk, keys: v.keys, x: v.x, y: v.y, R, d: d + 1, e })
+              walk(sub, it.children, v.x, v.y, e, d + 1, v.keys, fk)
+            }
+          }
+        }
+        walk(nl.lay, nl.tree.files, bx(b), by(b), b.ex, 1, [], b.id)
+      }
+
+      const itemsOfFk = (pl: Plat): TItem[] => {
+        const nl = nodeLay.get(pl.b.id)
+        if (!nl) return []
+        if (!pl.keys.length) return nl.tree.files
+        return visByNode.get(pl.b.id)?.get(pl.keys[pl.keys.length - 1])?.it.children ?? []
+      }
+      // -- camera: follow pan requests, else fit the fleet or the deepest open level ----
       if (Pp.focus && Pp.focus.n !== focusN) {
         focusN = Pp.focus.n
         const b = bodies.get(Pp.focus.id)
         if (b) { autoFit = false; panTo = { x: bx(b), y: by(b) } }
       }
+      const aw = Math.max(200, W - LEFT_PAD - Math.max(RIGHT_PAD, Pp.rightInset))
+      const ah = Math.max(160, H - TOP_PAD - BOTTOM_PAD)
       if (panTo) {
-        const cx = LEFT_PAD + (W - LEFT_PAD - Math.max(RIGHT_PAD, Pp.rightInset)) / 2
-        const cy = TOP_PAD + (H - TOP_PAD - BOTTOM_PAD) / 2
+        const cx = LEFT_PAD + aw / 2
+        const cy = TOP_PAD + ah / 2
         const t = ease(6)
         const tx = cx - (panTo.x - panTo.y) * CX * view.k
         const ty = cy - (panTo.x + panTo.y) * CY * view.k
@@ -942,7 +1104,38 @@ export default function IsoView(props: Props) {
         if (Math.abs(tx - view.tx) + Math.abs(ty - view.ty) < 1) panTo = null
       }
       if (autoFit && !dragBody) {
-        const f = fitTarget()
+        let f: { k: number; tx: number; ty: number } | null = null
+        const deep = plats.filter((p) => p.d >= 2 && openFks.has(p.fk)).sort((a, b) => b.d - a.d)[0]
+        if (deep) {
+          // fit the deepest open platform; zoom in further if its tiles would be too tight to read
+          const u = (deep.x - deep.y) * CX, v = (deep.x + deep.y) * CY
+          const hu = 2 * deep.R * CX + 40, hv = 2 * deep.R * CY + 30
+          const kFit = Math.min(aw / (2 * hu), ah / (2 * hv + 60))
+          // widest tile label on that level decides how far apart neighbours must be on screen
+          const kids = itemsOfFk(deep)
+          ctx.font = `500 10px ${MONO}`
+          let lw = READ_PX - 24
+          for (const it of kids) lw = Math.max(lw, Math.min(170, ctx.measureText(it.label).width + 60))
+          // tiles side by side on screen only exist from the 3rd tile on; before that,
+          // neighbours are diagonal and just need a label's height between them
+          const sp = spacing(deep.d)
+          const kRead = Math.max(44 / sp, kids.length >= 3 ? (lw + 24) / (2 * CX * sp) : 0)
+          const kk = clamp(Math.max(kFit, kRead), 0.3, 6)
+          f = { k: kk, tx: LEFT_PAD + aw / 2 - u * kk, ty: TOP_PAD + ah / 2 - (v - 20) * kk }
+        } else if (bodies.size) {
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+          for (const b of bodies.values()) {
+            const st = shapeOf(b.node.role)
+            const r = nodeR(b)
+            const X = bx(b), Y = by(b)
+            const u = (X - Y) * CX, v = (X + Y) * CY
+            const hu = 2 * r * CX, hv = 2 * r * CY
+            x0 = Math.min(x0, u - hu - 50); x1 = Math.max(x1, u + hu + 50)
+            y0 = Math.min(y0, v - hv - st.h - 62); y1 = Math.max(y1, v + hv + 20)
+          }
+          const kk = clamp(Math.min(aw / (x1 - x0), ah / (y1 - y0)), 0.3, 1.5)
+          f = { k: kk, tx: LEFT_PAD + aw / 2 - ((x0 + x1) / 2) * kk, ty: TOP_PAD + ah / 2 - ((y0 + y1) / 2) * kk }
+        }
         if (f) {
           const t = ease(4)
           view.k += (f.k - view.k) * t
@@ -962,7 +1155,7 @@ export default function IsoView(props: Props) {
         const gx0 = Math.min(...corners.map((c) => c.x)), gx1 = Math.max(...corners.map((c) => c.x))
         const gy0 = Math.min(...corners.map((c) => c.y)), gy1 = Math.max(...corners.map((c) => c.y))
         let step = GRID
-        while (step * k * CX < 14) step *= 2
+        while (step * view.k * CX < 14) step *= 2
         const i0 = Math.floor(gx0 / step), i1 = Math.ceil(gx1 / step)
         const j0 = Math.floor(gy0 / step), j1 = Math.ceil(gy1 / step)
         if (i1 - i0 < 400 && j1 - j0 < 400) {
@@ -1013,59 +1206,132 @@ export default function IsoView(props: Props) {
         jobsByNode.set(r.target, arr)
       }
 
-      // -- expanded platforms (ground layer) ---------------------------------------
-      for (const b of bodies.values()) {
-        if (b.ex < 0.01) continue
-        const lay = layoutOf(b)
-        if (!lay) continue
-        const st = shapeOf(b.node.role)
-        const e = b.ex
-        const R = lay.R * e + Math.max(st.w, st.d) / 2 * (1 - e)
-        const X = bx(b), Y = by(b)
-        ctx.globalAlpha = e
-        poly([P(X - R, Y - R, 0), P(X + R, Y - R, 0), P(X + R, Y + R, 0), P(X - R, Y + R, 0)])
-        ctx.fillStyle = 'rgba(255,255,255,0.72)'
+      const phaseStep = (key: string, speed: number) => {
+        const p = (phases.get(key) ?? 0) + (red ? 0 : speed * dt)
+        phases.set(key, p)
+        return p
+      }
+
+      // -- platforms (ground), shallow → deep, with their import / call edges ---------
+      plats.sort((a, b) => a.d - b.d)
+      for (const pl of plats) {
+        const col = shapeOf(pl.b.node.role).color
+        ctx.globalAlpha = pl.e
+        const R = pl.R
+        poly([P(pl.x - R, pl.y - R, 0), P(pl.x + R, pl.y - R, 0), P(pl.x + R, pl.y + R, 0), P(pl.x - R, pl.y + R, 0)])
+        ctx.fillStyle = pl.d === 1 ? 'rgba(255,255,255,0.72)' : 'rgba(246,249,253,0.92)'
         ctx.fill()
-        ctx.strokeStyle = rgba(st.color, 0.55)
-        ctx.lineWidth = 1.2
-        ctx.setLineDash([5, 4])
+        ctx.strokeStyle = rgba(col, pl.d === 1 ? 0.55 : 0.45)
+        ctx.lineWidth = pl.d === 1 ? 1.2 : 1
+        ctx.setLineDash(pl.d === 1 ? [5, 4] : [3, 3])
         ctx.stroke()
         ctx.setLineDash([])
-        // import edges: routed along the grid on the platform
-        const fp = (path: string) => {
-          const f = lay.pos.get(path)
-          return f ? { x: X + f.x * e, y: Y + f.y * e } : null
-        }
-        ctx.strokeStyle = 'rgba(40,56,84,0.32)'
+        ctx.globalAlpha = 1
+      }
+      for (const [nodeId, m] of visByNode) {
+        const nl = nodeLay.get(nodeId)
+        if (!nl) continue
+        // file imports (file level)
+        ctx.strokeStyle = 'rgba(40,56,84,0.3)'
         ctx.lineWidth = 1
-        for (const ed of lay.role.edges) {
-          const A = fp(ed.from), B = fp(ed.to)
-          if (!A || !B) continue
+        for (const ed of nl.tree.role.edges) {
+          const A = m.get(ed.from), B = m.get(ed.to)
+          if (!A || !B || A.a < 0.05) continue
+          ctx.globalAlpha = A.a
           strokePath(route(A, B, 0))
         }
-        // entry → port-file import paths, scaled by that link's real rate
-        for (const l of links.values()) {
-          const outgoing = l.a === b
-          if (!l.present || (!outgoing && l.b !== b)) continue
-          const pe = lay.role.ports.find((q) => q.port === l.data.port && q.dir === (outgoing ? 'out' : 'in'))
-          if (!pe) continue
-          const it = intensity(l.sF + l.sR)
-          if (it <= 0.01) continue
-          const pc = PROTO_COLOR[l.data.protocol] ?? PROTO_COLOR.other
-          for (const [f, t] of lay.pathTo.get(pe.file) ?? []) {
-            const A = fp(f), B = fp(t)
-            if (!A || !B) continue
-            ctx.strokeStyle = rgba(pc, 0.18 + 0.45 * it)
-            ctx.lineWidth = 1.5 + 1.5 * it
-            strokePath(route(A, B, 0))
+        ctx.globalAlpha = 1
+        // calls between visible symbols (each end rolls up to its nearest visible ancestor)
+        const drawn = new Set<string>()
+        for (const it of nl.tree.byKey.values()) {
+          if (!it.sym || !it.sym.calls?.length) continue
+          const from = nearestVisible(nodeId, chainOf(it))
+          if (!from) continue
+          const stat = from.it === it ? routeOf(nl.tree, it) : null
+          for (const cid of it.sym.calls) {
+            const cit = nl.tree.byKey.get(cid)
+            if (!cit) continue
+            const to = nearestVisible(nodeId, chainOf(cit))
+            if (!to || to === from) continue
+            if (startsWith(from.keys, to.keys) || startsWith(to.keys, from.keys)) continue // containment, not a call
+            if (from.d < 2 && to.d < 2) continue // file↔file is already shown as imports
+            const key = from.fk + '>' + to.fk
+            if (drawn.has(key) && !stat) continue
+            drawn.add(key)
+            const pts = route(from, to, 0)
+            const al = Math.min(from.a, to.a)
+            ctx.globalAlpha = al
+            ctx.strokeStyle = 'rgba(40,56,84,0.42)'
+            ctx.lineWidth = 1
+            ctx.setLineDash(from.it === it && to.it === cit ? [] : [2, 3])
+            strokePath(pts)
+            ctx.setLineDash([])
+            // arrowhead at the callee
+            const q = P(to.x, to.y), pq = P(pts[pts.length - 2].x, pts[pts.length - 2].y)
+            const ang = Math.atan2(q.y - pq.y, q.x - pq.x)
+            const back = Math.min(to.s * k * 0.75 + 3, 18)
+            const hx = q.x - Math.cos(ang) * back, hy = q.y - Math.sin(ang) * back
+            ctx.fillStyle = 'rgba(40,56,84,0.55)'
+            ctx.beginPath()
+            ctx.moveTo(hx, hy)
+            ctx.lineTo(hx - Math.cos(ang - 0.45) * 6, hy - Math.sin(ang - 0.45) * 6)
+            ctx.lineTo(hx - Math.cos(ang + 0.45) * 6, hy - Math.sin(ang + 0.45) * 6)
+            ctx.closePath(); ctx.fill()
+            // a route's real rps animates its outgoing calls
+            if (stat && stat.rps > 0) {
+              const ri = rpsIntensity(stat.rps)
+              const col = mix(KIND_COLOR.route, C.red, clamp(errFrac(stat.errorRate) * 6, 0, 0.75))
+              lane(pts, ri, col, phaseStep(key, 10 + 30 * ri), al, 0, 2)
+            }
+            ctx.globalAlpha = 1
           }
         }
-        ctx.globalAlpha = 1
+      }
+
+      // -- link endpoints: the deepest visible element that owns the traffic ----------
+      type Branch = { to: Vis; rps: number; err: number; live: boolean }
+      const endPos = (b: Body, l: LinkR, outgoing: boolean): { x: number; y: number; branches: Branch[] } => {
+        const base = { x: bx(b), y: by(b), branches: [] as Branch[] }
+        if (b.ex < 0.01) return base
+        const nl = nodeLay.get(b.id)
+        if (!nl) return base
+        const dir = outgoing ? 'out' : 'in'
+        const ports = nl.tree.role.ports
+        const pe = ports.find((p) => p.port === l.data.port && p.dir === dir) ?? ports.find((p) => p.port === l.data.port)
+        const fv = pe ? visByNode.get(b.id)?.get(pe.file) : undefined
+        if (!pe || !fv) return base
+        if (fv.e < 0.5 || !fv.it.children.length) return { x: fv.x, y: fv.y, branches: [] }
+        if (!outgoing && nl.tree.routes.size) {
+          const agg = new Map<string, Branch>()
+          for (const r of nl.tree.routes.values()) {
+            const it = nl.tree.byKey.get(r.symbolId)
+            if (!it || it.file !== pe.file) continue
+            const v = nearestVisible(b.id, chainOf(it))
+            if (!v || v === fv) continue
+            const cur = agg.get(v.fk) ?? { to: v, rps: 0, err: 0, live: true }
+            cur.rps += Math.max(0, r.rps)
+            cur.err = Math.max(cur.err, errFrac(r.errorRate))
+            agg.set(v.fk, cur)
+          }
+          return { x: fv.x, y: fv.y, branches: [...agg.values()] }
+        }
+        if (outgoing) {
+          const owners = new Map<string, Vis>()
+          for (const it of clientOwners(fv.it.children, l.data.protocol)) {
+            const v = nearestVisible(b.id, chainOf(it))
+            if (v && v !== fv) owners.set(v.fk, v)
+          }
+          const list = [...owners.values()]
+          if (list.length === 1) return { x: list[0].x, y: list[0].y, branches: [] }
+          return { x: fv.x, y: fv.y, branches: list.map((to) => ({ to, rps: 0, err: 0, live: false })) }
+        }
+        return { x: fv.x, y: fv.y, branches: [] }
       }
 
       // -- pipes: ground cables routed along the grid + iso dashes for bytes/s -----
       const nextVisible = new Set<LinkR>()
-      const nextRoutes = new Map<LinkR, { A: P2; B: P2; pts: P2[] }>()
+      const nextRoutes = new Map<LinkR, P2[]>()
+      const branchJobs: { from: P2; br: Branch; key: string; col: string; da: number }[] = []
       for (const l of links.values()) {
         const s = 1 - Math.exp(-dt / 1.2)
         l.sF += (Math.max(0, l.data.bytesPerSec) - l.sF) * s
@@ -1087,7 +1353,7 @@ export default function IsoView(props: Props) {
         const A = endPos(l.a, l, true)
         const B = endPos(l.b, l, false)
         const pts = route(A, B, l.nudge)
-        nextRoutes.set(l, { A, B, pts })
+        nextRoutes.set(l, pts)
         const isHov = hoverLink === l
         const da = Math.min(dimOf(l.a), dimOf(l.b))
         ctx.lineJoin = 'round'
@@ -1100,20 +1366,38 @@ export default function IsoView(props: Props) {
           ctx.setLineDash([])
           continue
         }
-        // tube: soft body + darker underside line + highlight
         ctx.strokeStyle = rgba(mix(col, '#ffffff', 0.72), 0.95 * da)
         ctx.lineWidth = Math.max(4, 13 * k)
         strokePath(pts)
         ctx.strokeStyle = rgba(col, (0.3 + (isSel || isHov ? 0.45 : 0)) * da)
         ctx.lineWidth = isSel || isHov ? 2 : 1
         strokePath(pts)
-        ctx.lineCap = 'butt'
         const http = l.data.protocol === 'http' || l.data.protocol === 'http-app'
-        flowLane(pts, l.sF, http && errTint > 0 ? mix(col, C.red, errTint) : col, l.phF, da)
-        flowLane(pts.slice().reverse(), l.sR, mix(col, '#1c2635', 0.25), l.phR, da)
+        if (l.sF >= 1) lane(pts, intensity(l.sF), http && errTint > 0 ? mix(col, C.red, errTint) : col, l.phF, da, 4.2, 2.6)
+        if (l.sR >= 1) lane(pts.slice().reverse(), intensity(l.sR), mix(col, '#1c2635', 0.25), l.phR, da, 4.2, 2.6)
+        for (const br of A.branches) branchJobs.push({ from: A, br, key: `${l.id}>${br.to.fk}`, col, da })
+        for (const br of B.branches) branchJobs.push({ from: B, br, key: `${l.id}>${br.to.fk}`, col, da })
       }
       visibleLinks = nextVisible
       routes = nextRoutes
+      // branches inside an opened file: per-route share of inbound traffic (real rps)
+      for (const j of branchJobs) {
+        const to = j.br.to
+        const pts = route(j.from, to, 0)
+        const al = Math.min(j.da, to.a)
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = rgba(mix(j.col, '#ffffff', 0.72), 0.9 * al)
+        ctx.lineWidth = Math.max(2.5, 7 * k * Math.pow(LEVEL_K, to.d - 2))
+        strokePath(pts)
+        ctx.strokeStyle = rgba(j.col, 0.35 * al)
+        ctx.lineWidth = 1
+        strokePath(pts)
+        if (j.br.live && j.br.rps > 0) {
+          const ri = rpsIntensity(j.br.rps)
+          lane(pts, ri, mix(j.col, C.red, clamp(j.br.err * 6, 0, 0.75)), phaseStep(j.key, 12 + 36 * ri), al, 0, 2.2)
+        }
+      }
 
       // -- ghosts of removed servers -------------------------------------------------
       for (let i = ghostsRef.current.length - 1; i >= 0; i--) {
@@ -1123,15 +1407,30 @@ export default function IsoView(props: Props) {
         drawBlock({ id: '', label: '', role: g.role, status: 'deleting', publicIp: '', privateIp: '', region: '', type: '', cpu: 0, memUsed: 0, memTotal: 0, load1: 0, processes: [], deletable: false }, g.x, g.y, -g.t * 30, null, 0, 0.35 * (1 - g.t), 0)
       }
 
-      // -- blocks + file tiles, painter's order (back → front) ------------------------
+      // -- issue roll-up onto visible items ---------------------------------------------
+      const itemIssues = new Map<string, { n: number; level: Level }>()
+      for (const [nodeId, nl] of nodeLay) {
+        const b = bodies.get(nodeId)!
+        if (b.ex < 0.5) continue
+        for (const iss of b.node.issues ?? []) {
+          const chain = issueChain(nl.tree, iss)
+          if (!chain.length) continue
+          const v = nearestVisible(nodeId, chain)
+          if (!v) continue
+          const cur = itemIssues.get(v.fk)
+          const lv = levelOf([iss])!
+          itemIssues.set(v.fk, { n: (cur?.n ?? 0) + 1, level: cur?.level === 'red' || lv === 'red' ? 'red' : 'amber' })
+        }
+      }
+
+      // -- blocks + tiles, painter's order (back → front) --------------------------------
       const surge = Pp.metrics?.mode === 'surge'
       type Job = { depth: number; draw: () => void }
       const drawJobs: Job[] = []
-      const labelJobs: { b: Body; sx: number; sy: number; foot: { x: number; y: number; r: number }; a: number; prio: number; level: Level | null; n: number }[] = []
-      const badgeJobs: { id: string; file?: string; x: number; y: number; level: Level; n: number; a: number }[] = []
+      type LabelJob = { prio: number; kind: 'node' | 'item'; b: Body; v?: Vis; sx: number; sy: number; foot: { x: number; y: number; r: number }; a: number; level: Level | null; n: number }
+      const labelJobs: LabelJob[] = []
+      const badgeJobs: { id: string; keys?: string[]; x: number; y: number; level: Level; n: number; a: number }[] = []
       const circles: { id: string; x: number; y: number; r: number }[] = []
-      const fileLabels: { x: number; y: number; text: string; loc: number; a: number; sel: boolean; id: string; file: string; level: Level | null; n: number }[] = []
-      const fileRects: { x0: number; y0: number; x1: number; y1: number }[] = []
 
       for (const b of bodies.values()) {
         const n = b.node
@@ -1146,16 +1445,15 @@ export default function IsoView(props: Props) {
         const tcol = level === 'amber' ? C.amber : C.red
         const dim = dimOf(b)
         const a = b.alpha * dim
-        const lay = b.ex > 0 ? layoutOf(b) : null
         const e = b.ex
         const fr = Math.max(st.w, st.d) / 2
         const c0 = P(X, Y, st.h / 2)
         const rs0 = Math.max(10, (fr + st.h * 0.35) * k)
-        const R = lay ? lay.R * e + fr * (1 - e) : fr
+        const R = nodeR(b)
         const isSel = sel?.kind === 'node' && sel.id === b.id
-        const isHov = hover?.kind === 'node' && hover.id === b.id
+        const isHov = hover?.kind === 'node' && hover.id === b.id && !hover.g
+        const opened = nodeLay.has(b.id) && e > 0.5
 
-        // ground decorations (issue glow, selection, rings) go with the block
         drawJobs.push({
           depth: X + Y - 0.01,
           draw: () => {
@@ -1177,7 +1475,6 @@ export default function IsoView(props: Props) {
               ctx.lineWidth = isSel ? 2 : 1.4
               ctx.stroke()
             }
-            // boot ring + running check jobs: arcs on the ground around the block
             const ringR = R + 12
             if (n.status === 'provisioning' || n.status === 'booting') {
               const t = (now - b.bootStart) / 1000
@@ -1192,9 +1489,9 @@ export default function IsoView(props: Props) {
             jobs.forEach((r, i) => {
               const g = groundEllipse(X, Y, 0, ringR + 5 + i * 6)
               const end = -Math.PI / 2 + Math.PI * 2 * Math.max(0.06, r.progress)
-              ctx.globalAlpha = r.alpha * dim
+              ctx.globalAlpha = r.alpha * dim * (1 - 0.6 * e)
               ctx.strokeStyle = C.job
-              ctx.lineWidth = 2
+              ctx.lineWidth = 2 - e
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, -Math.PI / 2, end); ctx.stroke()
               const tx = g.cx + Math.cos(end) * g.rx, ty = g.cy + Math.sin(end) * g.ry
               ctx.fillStyle = C.job
@@ -1203,8 +1500,6 @@ export default function IsoView(props: Props) {
             })
           },
         })
-
-        // the block itself: opens (lid rises, body fades) when expanded
         if (e < 0.995) {
           drawJobs.push({
             depth: X + Y,
@@ -1212,58 +1507,88 @@ export default function IsoView(props: Props) {
           })
         }
 
-        // file tiles
-        if (lay && e > 0.01) {
-          for (const f of lay.role.files) {
-            const fp = lay.pos.get(f.path)
-            if (!fp) continue
-            const fx = X + fp.x * e, fy = Y + fp.y * e
-            const fi = fileIssues(n, f.path)
-            const fl = levelOf(fi)
-            const isF = sel?.kind === 'node' && sel.id === b.id && sel.file === f.path
-            const isH = hover?.kind === 'file' && hover.id === b.id && hover.file === f.path
-            const s = fp.s * (0.4 + 0.6 * e)
-            const h = fp.h * e
-            const isEntry = f.path === lay.entry
-            drawJobs.push({
-              depth: fx + fy + 0.02,
-              draw: () => {
-                ctx.globalAlpha = e
-                shadow(fx, fy, s, s, h, e)
-                if (isF || isH) {
-                  const o = s / 2 + 6
-                  poly([P(fx - o, fy - o), P(fx + o, fy - o), P(fx + o, fy + o), P(fx - o, fy + o)])
-                  ctx.strokeStyle = rgba(C.acc, isF ? 0.95 : 0.55); ctx.lineWidth = isF ? 2 : 1.3; ctx.stroke()
-                }
-                const ff = faces(fl ? (fl === 'red' ? C.red : C.amber) : null, fl ? 1.6 : 0)
+        // node hit first; the platform, then deeper tiles, win when on top
+        if (opened) newHits.push({ kind: 'node', id: b.id, sx: 0, sy: 0, rs: 0, g: { x: X, y: Y, R } })
+        else {
+          newHits.push({ kind: 'node', id: b.id, sx: c0.x, sy: c0.y, rs: rs0 })
+          circles.push({ id: b.id, x: c0.x, y: c0.y, r: rs0 * 0.95 })
+        }
+        const ap = opened ? P(X - R, Y - R, 0) : P(X, Y, st.h + 26 * e)
+        labelJobs.push({
+          kind: 'node', b, sx: ap.x, sy: ap.y, foot: { x: c0.x, y: c0.y, r: rs0 }, a, level: nIssues > 0 && b.ta > 0.05 ? level : null, n: nIssues,
+          prio: (isSel || isHov ? 200 : 0) + st.weight + (level ? 3 : 0),
+        })
+      }
+
+      // tiles for every visible item (hits in depth order: shallow first)
+      const visSorted = visList.slice().sort((p, q) => p.d - q.d)
+      for (const v of visSorted) {
+        const nl = nodeLay.get(v.b.id)!
+        const tree = nl.tree
+        const it = v.it
+        const isSel = selFk === v.fk
+        const isHov = hover?.kind === 'item' && hover.id === v.b.id && !!hover.keys && sameKeys(hover.keys, v.keys)
+        const iss = itemIssues.get(v.fk)
+        const ownIss = issuesUnder(tree, v.b.node.issues ?? [], v.keys)
+        const lvl = levelOf(ownIss)
+        const stat = routeOf(tree, it)
+        const ef = stat ? errFrac(stat.errorRate) : 0
+        const tint = lvl ? (lvl === 'red' ? C.red : C.amber) : ef > 0 ? C.red : null
+        const tAmt = lvl ? 1.6 : clamp(ef * 6, 0, 0.75) * 2
+        const kc = it.kind === 'file' ? (it.key === tree.entry ? shapeOf(v.b.node.role).color : rgba(shapeOf(v.b.node.role).color, 0.55)) : KIND_COLOR[it.kind] ?? '#738096'
+        const decal = stat && ef > 0 ? mix(KIND_COLOR.route, C.red, clamp(ef * 6, 0, 0.75)) : kc
+        const expandable = it.children.length > 0
+        const s = v.s, h = v.h, fx = v.x, fy = v.y, e = v.e
+        if (v.a > 0.01 && e < 0.995) {
+          drawJobs.push({
+            depth: fx + fy + 0.02 + v.d * 0.001,
+            draw: () => {
+              ctx.globalAlpha = v.a * (1 - 0.85 * e)
+              shadow(fx, fy, s, s, h, v.a * (1 - e))
+              if ((isSel || isHov) && e < 0.3) {
+                const o = s / 2 + 5
+                poly([P(fx - o, fy - o), P(fx + o, fy - o), P(fx + o, fy + o), P(fx - o, fy + o)])
+                ctx.strokeStyle = rgba(C.acc, isSel ? 0.95 : 0.55); ctx.lineWidth = isSel ? 2 : 1.3; ctx.stroke()
+              }
+              const ff = faces(tint, tAmt)
+              const lid = e * 14 * Math.pow(LEVEL_K, v.d - 1)
+              if (it.kind === 'query') {
+                cylinder(fx, fy, 0, s * 0.48, h, ff, 1)
+                const el = groundEllipse(fx, fy, h + lid, s * 0.28)
+                ctx.beginPath(); ctx.ellipse(el.cx, el.cy, el.rx, el.ry, 0, 0, Math.PI * 2)
+                ctx.fillStyle = decal; ctx.fill()
+              } else {
                 box(fx, fy, 0, s, s, h, ff)
-                // file "page" decal on top: role colour for entry, ink otherwise
+                if (expandable) seam(fx, fy, s, s, h * 0.74)
+                if (lid > 0.2) box(fx, fy, h + lid, s, s, 2, ff)
                 const ic = s * 0.5
-                poly([P(fx - ic / 2, fy - ic / 2, h), P(fx + ic / 2, fy - ic / 2, h), P(fx + ic / 2, fy + ic / 2, h), P(fx - ic / 2, fy + ic / 2, h)])
-                ctx.fillStyle = fl ? rgba(fl === 'red' ? C.red : C.amber, 0.9) : isEntry ? st.color : rgba(st.color, 0.55)
+                const zt = h + lid + (lid > 0.2 ? 2 : 0)
+                poly([P(fx - ic / 2, fy - ic / 2, zt), P(fx + ic / 2, fy - ic / 2, zt), P(fx + ic / 2, fy + ic / 2, zt), P(fx - ic / 2, fy + ic / 2, zt)])
+                ctx.fillStyle = decal
                 ctx.fill()
-                ctx.globalAlpha = 1
-              },
+                if (it.sym?.secret) lockGlyph(fx, fy, zt, s)
+              }
+              ctx.globalAlpha = 1
+            },
+          })
+        }
+        if (v.a > 0.5) {
+          const top = P(fx, fy, h)
+          if (e > 0.5) newHits.push({ kind: 'item', id: v.b.id, keys: v.keys, sx: 0, sy: 0, rs: 0, g: { x: fx, y: fy, R: v.R } })
+          else newHits.push({ kind: 'item', id: v.b.id, keys: v.keys, sx: top.x, sy: top.y + s * 0.3 * k, rs: Math.max(s * 0.8 * k, 8) })
+          if (e < 0.5) circles.push({ id: v.fk, x: top.x, y: top.y + s * 0.3 * k, r: s * 0.5 * k })
+          const anchor = e > 0.5 ? P(fx - v.R, fy - v.R, 0) : P(fx, fy, h)
+          const readable = spacing(v.d) * k * CX * 2 >= 70
+          if (readable || isSel || isHov || e > 0.5) {
+            labelJobs.push({
+              kind: 'item', b: v.b, v, sx: anchor.x, sy: anchor.y - (e > 0.5 ? 0 : s * 0.62 * k + 4), foot: { x: top.x, y: top.y, r: s * k }, a: (v.a - 0.5) * 2,
+              level: iss?.level ?? null, n: iss?.n ?? 0,
+              prio: (isSel || isHov ? 150 : 0) + (e > 0.5 ? 120 : 0) + (stat ? 40 + Math.min(20, stat.rps) : 0) + (iss ? 30 : 0) + (5 - Math.min(5, v.d)) * 4,
             })
-            const top = P(fx, fy, h)
-            if (e > 0.5) newHits.push({ kind: 'file', id: b.id, file: f.path, sx: top.x, sy: top.y + s * 0.3 * k, rs: Math.max(s * 0.9 * k, 9) })
-            if (e > 0.6) fileLabels.push({ x: top.x, y: top.y - s * 0.62 * k - 4, text: f.label, loc: f.loc, a: (e - 0.6) / 0.4, sel: isF, id: b.id, file: f.path, level: fl, n: fi.length })
-            circles.push({ id: b.id + f.path, x: top.x, y: top.y + s * 0.3 * k, r: s * 0.7 * k })
+          } else if (iss) {
+            badgeJobs.push({ id: v.b.id, keys: v.keys, x: top.x + s * 0.6 * k + 8, y: top.y - 6, level: iss.level, n: iss.n, a: v.a })
           }
         }
-
-        // hit target: block body; expanded → the platform (files pushed later win)
-        const hitR = lay && e > 0.5 ? R * k * 1.1 : rs0
-        const hc = lay && e > 0.5 ? P(X, Y, 0) : c0
-        newHits.splice(newHits.length - (lay && e > 0.5 ? lay.role.files.length : 0), 0, { kind: 'node', id: b.id, sx: hc.x, sy: hc.y, rs: hitR })
-        if (e < 0.5) circles.push({ id: b.id, x: c0.x, y: c0.y, r: rs0 * 0.95 })
-        // label anchor: above the block top (or above the platform's back corner)
-        const topZ = st.h + 26 * e
-        const ap = e > 0.5 && lay ? P(X - R, Y - R, 0) : P(X, Y, topZ)
-        labelJobs.push({
-          b, sx: ap.x, sy: ap.y, foot: { x: c0.x, y: c0.y, r: rs0 }, a, level: nIssues > 0 && b.ta > 0.05 ? level : null, n: nIssues,
-          prio: (isSel || isHov ? 100 : 0) + st.weight + (level ? 3 : 0),
-        })
       }
 
       drawJobs.sort((p, q) => p.depth - q.depth)
@@ -1285,41 +1610,15 @@ export default function IsoView(props: Props) {
         ctx.globalAlpha = 1
       }
 
-      // -- file labels (small flat tags) ----------------------------------------------
-      for (const fl of fileLabels) {
-        ctx.globalAlpha = fl.a
-        ctx.font = `500 10px ${MONO}`
-        const tw = ctx.measureText(fl.text).width
-        ctx.font = `400 9px ${MONO}`
-        const lw = ctx.measureText(String(fl.loc)).width
-        const w = tw + lw + 16
-        const x = fl.x - w / 2, y = fl.y - 16
-        fileRects.push({ x0: x - 2, y0: y - 2, x1: x + w + 2, y1: y + 17 })
-        if (fl.level && fl.a > 0.3) badgeJobs.push({ id: fl.id, file: fl.file, x: x + w + 11, y: y + 7.5, level: fl.level, n: fl.n, a: fl.a })
-        ctx.fillStyle = fl.sel ? '#e7f0fd' : 'rgba(255,255,255,0.95)'
-        ctx.beginPath(); ctx.roundRect(x, y, w, 15, 3); ctx.fill()
-        ctx.strokeStyle = fl.sel ? rgba(C.acc, 0.8) : 'rgba(60,80,110,0.2)'
-        ctx.lineWidth = 1
-        ctx.stroke()
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'middle'
-        ctx.font = `500 10px ${MONO}`
-        ctx.fillStyle = C.ink
-        ctx.fillText(fl.text, x + 5, y + 8)
-        ctx.font = `400 9px ${MONO}`
-        ctx.fillStyle = C.dim
-        ctx.fillText(String(fl.loc), x + 11 + tw, y + 8)
-        ctx.globalAlpha = 1
-      }
-
-      // -- status tags + labels: flat white tags above blocks (collision pass) -------
+      // -- labels: flat white tags (servers) and small tags (items), collision pass ----
       {
         type Rect = { x0: number; y0: number; x1: number; y1: number }
-        const placed: Rect[] = [...fileRects]
-        const overlaps = (r: Rect, ownId: string) => {
+        const placed: Rect[] = []
+        const overlaps = (r: Rect, ownId: string, labelsOnly = false) => {
           for (const q of placed) if (r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0) return true
+          if (labelsOnly) return false
           for (const c of circles) {
-            if (c.id === ownId || c.id.startsWith(ownId)) continue
+            if (c.id === ownId) continue
             const nx = clamp(c.x, r.x0, r.x1), ny = clamp(c.y, r.y0, r.y1)
             if (Math.hypot(c.x - nx, c.y - ny) < c.r) return true
           }
@@ -1327,6 +1626,58 @@ export default function IsoView(props: Props) {
         }
         const showGauge = k > 0.55
         for (const j of labelJobs.sort((p, q) => q.prio - p.prio)) {
+          if (j.kind === 'item' && j.v) {
+            const v = j.v
+            const it = v.it
+            const tree = nodeLay.get(v.b.id)!.tree
+            const stat = routeOf(tree, it)
+            const open = v.e > 0.5
+            const fontMain = open ? `600 10.5px ${MONO}` : `500 10px ${MONO}`
+            ctx.font = fontMain
+            const maxW = open ? 260 : Math.max(90, spacing(v.d) * k * CX * 1.7)
+            const text = truncate(ctx, it.label, maxW)
+            const tw = ctx.measureText(text).width
+            const sub = it.sym?.secret ? 'secret' : stat ? `${fmtRps(stat.rps)} r/s` : it.kind === 'file' ? String(it.fileInfo?.loc ?? '') : it.kind
+            const subCol = it.sym?.secret ? C.amber : stat && errFrac(stat.errorRate) > 0 ? C.red : C.dim
+            ctx.font = `400 9px ${MONO}`
+            const sw = ctx.measureText(sub).width
+            const chev = it.children.length && !open ? 10 : 0
+            const w = tw + sw + 16 + chev
+            const hgt = 15
+            const x = open ? j.sx - 4 : j.sx - w / 2
+            const y = open ? j.sy - hgt - 6 : j.sy - hgt - 1
+            const rect = { x0: x - 2, y0: y - 2, x1: x + w + 2, y1: y + hgt + 2 }
+            if (j.prio < 150 && !open && overlaps(rect, v.fk, true)) {
+              if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: j.foot.x + j.foot.r * 0.6 + 8, y: j.foot.y - 6, level: j.level, n: j.n, a: v.a })
+              continue
+            }
+            placed.push(rect)
+            ctx.globalAlpha = clamp(j.a, 0, 1)
+            const isSel = selFk === v.fk
+            ctx.fillStyle = isSel ? '#e7f0fd' : 'rgba(255,255,255,0.96)'
+            ctx.beginPath(); ctx.roundRect(x, y, w, hgt, 3); ctx.fill()
+            ctx.strokeStyle = isSel ? rgba(C.acc, 0.85) : open ? rgba(KIND_COLOR[it.kind] ?? shapeOf(v.b.node.role).color, 0.6) : 'rgba(60,80,110,0.2)'
+            ctx.lineWidth = 1
+            ctx.stroke()
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            ctx.font = fontMain
+            ctx.fillStyle = C.ink
+            ctx.fillText(text, x + 5, y + 8)
+            ctx.font = `400 9px ${MONO}`
+            ctx.fillStyle = subCol
+            ctx.fillText(sub, x + 11 + tw, y + 8)
+            if (chev) {
+              // expandable affordance: a small chevron
+              const cx2 = x + w - 7, cy2 = y + 7.5
+              ctx.strokeStyle = C.dim
+              ctx.lineWidth = 1.2
+              ctx.beginPath(); ctx.moveTo(cx2 - 2, cy2 - 3); ctx.lineTo(cx2 + 1.5, cy2); ctx.lineTo(cx2 - 2, cy2 + 3); ctx.stroke()
+            }
+            ctx.globalAlpha = 1
+            if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: x + w + 11, y: y + 7.5, level: j.level, n: j.n, a: j.a })
+            continue
+          }
           const n = j.b.node
           const tag = n.status === 'provisioning' || n.status === 'booting' || n.status === 'deleting' || n.status === 'offline' ? n.status.toUpperCase() : ''
           ctx.font = `600 11px ${SANS}`
@@ -1339,12 +1690,12 @@ export default function IsoView(props: Props) {
           const tagW = tag ? ctx.measureText(tag).width + 8 : 0
           const w = Math.max(lw + (tagW ? tagW + 6 : 0), iw, showGauge ? 70 : 0) + 14
           const h = 16 + 13 + (showGauge && n.status === 'running' ? 8 : 0) + 4
-          const sx = j.sx
+          const opened = j.b.ex > 0.5 && nodeLay.has(j.b.id)
+          const sx = opened ? j.sx - 4 + w / 2 : j.sx
           const y1 = j.sy - 12
           let rect = { x0: sx - w / 2, y0: y1 - h, x1: sx + w / 2, y1 }
           let below = false
-          if (j.prio < 100 && overlaps(rect, j.b.id)) {
-            // try under the block's front corner
+          if (j.prio < 200 && overlaps(rect, j.b.id)) {
             const fy = j.foot.y + j.foot.r + 8
             const alt = { x0: j.foot.x - w / 2, y0: fy, x1: j.foot.x + w / 2, y1: fy + h }
             if (overlaps(alt, j.b.id) || alt.y1 > H - BOTTOM_PAD + 10) continue
@@ -1354,11 +1705,10 @@ export default function IsoView(props: Props) {
           placed.push(rect)
           const a = Math.max(0.55, j.a)
           ctx.globalAlpha = a
-          // leader line from tag to block top
           if (!below) {
             ctx.strokeStyle = 'rgba(40,56,84,0.35)'
             ctx.lineWidth = 1
-            ctx.beginPath(); ctx.moveTo(sx, rect.y1); ctx.lineTo(sx, j.sy - 2); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(opened ? j.sx : sx, rect.y1); ctx.lineTo(opened ? j.sx : sx, j.sy - 2); ctx.stroke()
           }
           ctx.save()
           ctx.shadowColor = 'rgba(30,45,70,0.14)'
@@ -1367,10 +1717,9 @@ export default function IsoView(props: Props) {
           ctx.fillStyle = '#ffffff'
           ctx.beginPath(); ctx.roundRect(rect.x0, rect.y0, w, h, 4); ctx.fill()
           ctx.restore()
-          ctx.strokeStyle = j.prio >= 100 ? rgba(C.acc, 0.7) : 'rgba(60,80,110,0.18)'
+          ctx.strokeStyle = j.prio >= 200 ? rgba(C.acc, 0.7) : 'rgba(60,80,110,0.18)'
           ctx.lineWidth = 1
           ctx.beginPath(); ctx.roundRect(rect.x0 + 0.5, rect.y0 + 0.5, w - 1, h - 1, 4); ctx.stroke()
-          // role colour stripe on the left
           ctx.fillStyle = shapeOf(n.role).color
           ctx.fillRect(rect.x0 + 0.5, rect.y0 + 4, 2.5, h - 8)
           const lx = rect.x0 + 8
@@ -1428,7 +1777,7 @@ export default function IsoView(props: Props) {
           const text = bj.n > 1 ? `!${bj.n}` : '!'
           ctx.font = `700 10px ${SANS}`
           const w = Math.max(17, ctx.measureText(text).width + 9)
-          ctx.globalAlpha = Math.max(0.6, bj.a) * (red ? 1 : 0.85 + 0.15 * pulse)
+          ctx.globalAlpha = clamp(Math.max(0.6, bj.a), 0, 1) * (red ? 1 : 0.85 + 0.15 * pulse)
           ctx.fillStyle = col
           ctx.beginPath(); ctx.roundRect(bj.x - w / 2, bj.y - 8, w, 16, 8); ctx.fill()
           ctx.strokeStyle = '#ffffff'
@@ -1439,19 +1788,19 @@ export default function IsoView(props: Props) {
           ctx.textBaseline = 'middle'
           ctx.fillText(text, bj.x, bj.y + 0.5)
           ctx.globalAlpha = 1
-          newHits.push({ kind: 'badge', id: bj.id, file: bj.file, sx: bj.x, sy: bj.y, rs: w / 2 })
+          newHits.push({ kind: 'badge', id: bj.id, keys: bj.keys, sx: bj.x, sy: bj.y, rs: w / 2 })
         }
       }
       hits = newHits
       if (hoverLink && !visibleLinks.has(hoverLink)) hoverLink = null
       if (hover) {
         const h = hover
-        hover = hits.find((x) => x.kind === h.kind && x.id === h.id && x.file === h.file) ?? null
+        hover = hits.find((x) => x.kind === h.kind && x.id === h.id && sameKeys(x.keys ?? [], h.keys ?? [])) ?? null
       }
 
       // -- tooltips ------------------------------------------------------------------
       if (!press && mouse) {
-        if (hover?.kind === 'node') {
+        if (hover?.kind === 'node' && !hover.g) {
           const b = bodies.get(hover.id)
           if (b) {
             const n = b.node
@@ -1466,23 +1815,33 @@ export default function IsoView(props: Props) {
             for (const r of jobsByNode.get(n.id) ?? []) if (r.active) lines.push({ t: `check ${r.type} ${Math.round(r.progress * 100)}%  ${r.note}`, c: C.job })
             const ni = (n.issues ?? []).length
             if (ni) lines.push({ t: `! ${ni} issue${ni > 1 ? 's' : ''} — select for detail`, c: issueLevel(n) === 'amber' ? C.amber : C.red })
-            if (codeFor(Pp.codemap, n.role) && b.ex < 0.5) lines.push({ t: 'click to open into files', c: C.acc })
+            if (treeOf(b) && b.ex < 0.5) lines.push({ t: 'click to open into files', c: C.acc })
             drawTooltip(lines, { x: hover.sx, y: hover.sy, r: Math.min(hover.rs, 60) + 10 }, 'node')
           }
-        } else if (hover?.kind === 'file') {
-          const b = bodies.get(hover.id)
-          const lay = b ? layoutOf(b) : null
-          const f = lay?.role.files.find((x) => x.path === hover!.file)
-          if (b && lay && f) {
-            const ports = lay.role.ports.filter((q) => q.file === f.path).map((q) => `${q.dir} :${q.port}`)
-            const imports = lay.role.edges.filter((e) => e.from === f.path).length
-            const lines: { t: string; c?: string }[] = [{ t: f.path }, { t: `${f.loc} loc  ·  imports ${imports}${ports.length ? '  ·  ' + ports.join(', ') : ''}` }]
-            for (const i of fileIssues(b.node, f.path).slice(0, 2)) lines.push({ t: `! ${i.severity}  ${i.title}`, c: (SEV_RANK[i.severity] ?? 0) >= 3 ? C.red : C.amber })
+        } else if (hover?.kind === 'item' && hover.keys) {
+          const v = visByNode.get(hover.id)?.get(hover.keys[hover.keys.length - 1])
+          const nl = nodeLay.get(hover.id)
+          if (v && nl && v.e < 0.5) {
+            const it = v.it
+            const lines: { t: string; c?: string }[] = [{ t: it.kind === 'file' ? it.key : it.label }]
+            if (it.kind === 'file') {
+              const ports = nl.tree.role.ports.filter((q) => q.file === it.key).map((q) => `${q.dir} :${q.port}`)
+              lines.push({ t: `${it.fileInfo?.loc ?? 0} loc  ·  ${it.children.length} symbols${ports.length ? '  ·  ' + ports.join(', ') : ''}` })
+            } else if (it.sym) {
+              lines.push({ t: `${it.kind}  ·  ${it.file.split('/').pop()}:${it.sym.line}–${it.sym.endLine}  ·  calls ${it.sym.calls?.length ?? 0}` })
+              if (it.sym.secret) lines.push({ t: 'secret: value never shown', c: C.amber })
+            }
+            const st = routeOf(nl.tree, it)
+            if (st) lines.push({ t: `${fmtRps(st.rps)} req/s  ·  err ${(errFrac(st.errorRate) * 100).toFixed(2)}%  ·  p95 ${st.p95ms == null ? '—' : st.p95ms + ' ms'}`, c: errFrac(st.errorRate) > 0 ? C.red : C.text })
+            for (const i of issuesUnder(nl.tree, v.b.node.issues ?? [], v.keys).slice(0, 2)) lines.push({ t: `! ${i.severity}  ${i.title}`, c: (SEV_RANK[i.severity] ?? 0) >= 3 ? C.red : C.amber })
+            if (it.children.length) lines.push({ t: `click to open (${it.children.length} inside)`, c: C.acc })
             drawTooltip(lines, { x: hover.sx, y: hover.sy, r: hover.rs + 6 }, 'node')
           }
         } else if (hover?.kind === 'badge') {
           const b = bodies.get(hover.id)
-          const src = b ? (hover.file ? fileIssues(b.node, hover.file) : b.node.issues ?? []) : []
+          const tree = b ? treeOf(b) : null
+          const all = b?.node.issues ?? []
+          const src = hover.keys ? issuesUnder(tree, all, hover.keys) : all
           const iss = src.slice().sort((x, y) => (SEV_RANK[y.severity] ?? 0) - (SEV_RANK[x.severity] ?? 0))
           if (b && iss.length) {
             const lines = [{ t: `${iss[0].severity.toUpperCase()}  ${iss[0].title}`, c: (SEV_RANK[iss[0].severity] ?? 0) >= 3 ? C.red : C.amber }]

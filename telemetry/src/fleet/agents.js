@@ -38,6 +38,8 @@ function recommend(issue, node) {
     case 'cpu-high': return `${L} is CPU-bound: add another node of role ${node.role} or reduce load`;
     case 'mem-high': return `${L} is low on memory: add a node of role ${node.role} or move to g6-standard-1`;
     case 'disk-full': return `on ${L}: clear /var/log (journalctl --vacuum-size=100M) or grow the disk`;
+    case 'dependency-missing':
+      return `${L} points at a dead ${issue.id.endsWith(':db') ? 'db' : 'cache'}: add a ${issue.id.endsWith(':db') ? 'db' : 'cache'} node; the controller re-wires apps one at a time automatically`;
     case 'unreachable': return `${L} is unreachable over SSH: check the Linode console / Lish and reboot if hung`;
     case 'app-vuln': {
       const fixes = {
@@ -158,7 +160,8 @@ export class FleetAgents {
 
   _finding(agent, node, issue) {
     const finding = { id: issue.id, title: issue.title, severity: issue.severity, kind: issue.kind, detail: issue.detail,
-      file: issue.file || null, line: issue.line || null, endpoint: issue.endpoint || null, nodeId: node.id, nodeLabel: node.label };
+      file: issue.file || null, line: issue.line || null, endpoint: issue.endpoint || null, symbolId: issue.symbolId || null,
+      nodeId: node.id, nodeLabel: node.label };
     this._event({ type: 'finding', agentId: agent.id, agentType: agent.type, targetNodeId: node.id, finding,
       text: `${agent.label} found on ${node.label}: ${issue.title} (${issue.severity})${issue.file ? ` at ${issue.file}:${issue.line}` : ''}` });
     if (this.upsertVuln) {

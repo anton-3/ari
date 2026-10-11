@@ -8,7 +8,7 @@ import { deployAgents, recallAgents, listAgents, step as swarmStep, configureSwa
 import { generateReasoning, getReasoning, onReasoning, pushReasoning } from './reasoning.js';
 import { Fleet, isLoopback } from './fleet/index.js';
 import { FleetAgents, fleetStatusLine } from './fleet/agents.js';
-import { scanCodemap, getCodemap } from './fleet/codemap.js';
+import { scanCodemap, codemapView } from './fleet/codemap.js';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 // Optional live target: set LIVE_TARGET=http://localhost:8070 to sample AcmePay.
@@ -103,12 +103,30 @@ const sendErr = (res, e) => res.status(e.status || 500).json({ ok: false, error:
 
 app.get('/api/fleet', localOnly, (_req, res) => res.json(fleet.snapshot()));
 app.get('/api/fleet/roles', localOnly, (_req, res) => res.json(fleet.rolesView()));
-app.get('/api/fleet/codemap', localOnly, (_req, res) => res.json(getCodemap()));
+app.get('/api/fleet/codemap', localOnly, (_req, res) => res.json(codemapView()));
 
 app.post('/api/fleet/nodes', localOnly, async (req, res) => {
   try {
     const node = await fleet.createNode(String((req.body || {}).role || ''));
     res.status(202).json({ node });
+  } catch (e) { sendErr(res, e); }
+});
+
+app.get('/api/fleet/incident', localOnly, (_req, res) => res.json(fleet.incidentView()));
+
+app.post('/api/fleet/block-ips', localOnly, async (req, res) => {
+  try {
+    const { ips } = req.body || {};
+    if (!Array.isArray(ips)) return res.status(400).json({ ok: false, error: 'body must be { ips: [...] }' });
+    res.json(await fleet.blockIps(ips));
+  } catch (e) { sendErr(res, e); }
+});
+
+app.post('/api/fleet/unblock-ips', localOnly, async (req, res) => {
+  try {
+    const { ips, all } = req.body || {};
+    if (!all && !Array.isArray(ips)) return res.status(400).json({ ok: false, error: 'body must be { ips: [...] } or { all: true }' });
+    res.json(await fleet.unblockIps({ ips, all }));
   } catch (e) { sendErr(res, e); }
 });
 

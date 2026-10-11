@@ -114,11 +114,57 @@ export const tools = [
     type: "function",
     function: {
       name: "block_ips",
-      description: "Block one or more source IP addresses at the edge firewall, e.g. during a brute-force or scan.",
+      description:
+        "Ban source IP addresses at the load balancer during an incident (e.g. a denial-of-service flood). If you omit ips, the current attacking IPs from the live incident are banned.",
       parameters: {
         type: "object",
-        properties: { ips: { type: "array", items: { type: "string" }, description: "IP addresses to block" } },
-        required: ["ips"],
+        properties: {
+          ips: {
+            type: "array",
+            items: { type: "string" },
+            description: "IP addresses to ban. Omit to ban the current attackers from the live incident.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_incident",
+      description:
+        "Read the current live incident on the fleet (e.g. a denial-of-service attack): whether one is active, the request rate, and the attacking source IP addresses.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "scale_web_app",
+      description:
+        "Add another node to serve the web app (AcmePay), e.g. to absorb a traffic surge. It boots on our cloud and joins the load balancer automatically.",
+      parameters: {
+        type: "object",
+        properties: {
+          count: { type: "integer", description: "How many app nodes to add (default 1)." },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_rate_limit_pr",
+      description:
+        "Implement new rate limiting in the reverse-proxy (load balancer) nginx config, in a NEW git branch, open a pull request, and text the caller the PR link. Call this once when asked to add rate limiting as a PR.",
+      parameters: {
+        type: "object",
+        properties: {
+          note: { type: "string", description: "Optional short note for the PR description." },
+        },
+        required: [],
       },
     },
   },
@@ -184,7 +230,40 @@ export async function runTool(name, args) {
     if (name === "rotate_secret") {
       return `Rotated ${args.name} and revoked the exposed key. New secret is in the vault; I've queued a history purge so the old one can't be recovered from the repo.`;
     }
+    if (name === "get_incident") {
+      const inc = await tget("/api/fleet/incident");
+      if (!inc.active) return "No active incident on the fleet right now. Traffic looks normal.";
+      const ips = (inc.attackerIps || []).map((a) => a.ip);
+      return `Active incident on ${inc.label || "the load balancer"}: about ${Math.round(inc.reqPerSec)} requests a second, baseline is ${Math.round(inc.baselineRps || 0)}. Looks like a denial-of-service flood from ${ips.length} source${ips.length === 1 ? "" : "s"}: ${ips.join(", ")}.`;
+    }
     if (name === "block_ips") {
+      let ips = Array.isArray(args.ips) ? args.ips.filter(Boolean) : [];
+      if (!ips.length) {
+        const inc = await tget("/api/fleet/incident").catch(() => ({}));
+        ips = (inc.attackerIps || []).map((a) => a.ip);
+      }
+      if (!ips.length) return "No IPs to ban — I couldn't find any attacking addresses in the current incident.";
+      const data = await tpost("/api/fleet/block-ips", { ips });
+      const blocked = data.blocked || ips;
+      return `Banned ${blocked.join(", ")} at the load balancer. That traffic is being dropped now, and the request rate should settle.`;
+    }
+    if (name === "scale_web_app") {
+      const count = Math.max(1, Math.min(5, parseInt(args.count, 10) || 1));
+      const made = [];
+      for (let i = 0; i < count; i++) {
+        const r = await tpost("/api/fleet/nodes", { role: "app" });
+        if (r.node) made.push(r.node.label || r.node.id);
+      }
+      if (!made.length) return "I couldn't add a node right now — the fleet may be at capacity.";
+      return `Spinning up ${made.length} more app node${made.length > 1 ? "s" : ""} on the cloud (${made.join(", ")}). ${made.length > 1 ? "They're" : "It's"} booting and will join the load balancer automatically in a few minutes.`;
+    }
+    if (name === "open_rate_limit_pr") {
+      const { openRateLimitPr } = await import("./rate-limit-pr.js");
+      const r = await openRateLimitPr({ note: args.note || "" });
+      if (!r.ok) return `I couldn't open the PR: ${r.error}. I'll flag it and we can do it manually.`;
+      return `Done — I pushed the rate-limiting change to branch ${r.branch} and opened the pull request. I've texted you the link${r.url ? "" : " (PR created)"}.`;
+    }
+    if (name === "block_ips_LEGACY_UNUSED") {
       const ips = (args.ips || []).join(", ");
       return `Blocked ${ips} at the edge firewall. That traffic is being dropped now.`;
     }

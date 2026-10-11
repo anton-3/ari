@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "surge": "node src/cli.js surge",
-    "normal": "node src/cli.js normal"
+    "normal": "node src/cli.js normal",
+    "drill:ddos": "node src/fleet/drill-ddos.js"
   },
   "license": "MIT",
   "dependencies": {

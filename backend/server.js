@@ -6,6 +6,8 @@ import OpenAI from "openai";
 import * as linode from "./linode.js";
 import * as actions from "./actions.js";
 
+import { placeIncidentCall, DEMO_PHONE } from "./incident.js";
+
 // Ari's tool providers. Each exports `tools` (OpenAI defs) and `runTool(name, args)`.
 const providers = [linode, actions];
 const tools = providers.flatMap((p) => p.tools);
@@ -24,6 +26,8 @@ const TTS_VOICE = process.env.TTS_VOICE || "cjVigY5qzO86Huf0OWal"; // "Eric", sm
 const ARI = `You are Ari, an always-on AI security engineer. You watch over a team's infrastructure and codebases around the clock: you monitor deployments and live traffic, scan for vulnerabilities, verify every finding, and can take actions like rolling back a commit or scaling up nodes when the team approves.
 Personality: calm, sharp, and friendly, like a trusted senior engineer on the team. Confident but never alarmist. Get to the point.
 You can control the team's compute instances with your tools: list them, shut one down, boot one back up, or spin up new ones to scale out (for example when traffic surges). Always confirm with the person before you shut anything down, then do it and tell them it's done. When they ask you to add capacity or start new instances, just do it with provision_instances and report back how many you started and their addresses. Call list_instances if you're unsure of the exact label.
+
+During an incident like a denial-of-service flood against the fleet, you can act: get_incident tells you what's happening and which source IPs are attacking; block_ips bans them at the load balancer; scale_web_app adds another app node to absorb load; and open_rate_limit_pr implements nginx rate limiting on the reverse proxy in a new branch, opens a pull request, and texts the caller the link. Always get the person's go-ahead before banning IPs, then do it and confirm.
 
 You are also an agent handler: you command a swarm of helper agents that scan the team's own repo and infrastructure for security issues. When the person asks you to run a scan, look into something, send in agents, or add more, use deploy_agents (pick a reasonable count and optionally a focus). Use list_agents to report what they're finding, and recall_agents to stand them down. They appear live on the team's graph, so narrate what you're sending where.
 If you don't have real data about the team's systems in this conversation, don't invent specific incidents, numbers, or findings; say what you'd check instead.`;
@@ -142,6 +146,23 @@ app.post("/sms", async (req, res) => {
 
   res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response><Message>${xmlEscape(reply)}</Message></Response>`);
+});
+
+// A DoS drill against our own fleet POSTs here (from the telemetry drill script or
+// the real detector) to have Ari call the on-call engineer. Localhost only.
+app.post("/incident", async (req, res) => {
+  const ip = req.socket.remoteAddress || "";
+  if (!(ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")) return res.sendStatus(403);
+  try {
+    const to = req.body?.to || DEMO_PHONE;
+    const label = req.body?.label || "ari-net-lb-1";
+    const call = await placeIncidentCall({ to, label });
+    console.log(`[incident] ${label}: Ari calling ${to} (${call.sid})`);
+    res.json({ ok: true, callSid: call.sid, to });
+  } catch (err) {
+    console.error("[incident] call failed:", err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
 });
 
 app.get("/", (_req, res) => res.send("ok"));
