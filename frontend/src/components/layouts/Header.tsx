@@ -8,7 +8,7 @@ export function Header() {
         <a className="brand" href="/">
           {site.name}
         </a>
-        <ButtonLink variant="ghost">Open App</ButtonLink>
+        <ButtonLink variant="ghost" arrow href="/dashboard.html">Open Dashboard</ButtonLink>
       </div>
     </header>
   )

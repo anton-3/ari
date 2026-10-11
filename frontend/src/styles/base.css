@@ -141,6 +141,112 @@ button {
   border-color: var(--muted);
 }
 
+/* Arrow buttons: on hover a disc grows from the centre to flood the button,
+   the label slides over and the arrow leaves one side and enters the other. */
+.btn--arrow {
+  --btn-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --btn-arrow-size: 16px;
+  --btn-arrow-inset: 14px;
+  --btn-shift: 10px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0 34px;
+  transition:
+    transform 0.15s ease,
+    scale 0.15s ease,
+    color 0.6s var(--btn-ease),
+    border-color 0.6s var(--btn-ease),
+    box-shadow 0.6s var(--btn-ease);
+}
+
+.btn--arrow:active {
+  scale: 0.97;
+}
+
+.btn__fill {
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 125%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.08);
+  transition:
+    transform 0.6s var(--btn-ease),
+    opacity 0.6s var(--btn-ease);
+}
+
+.btn__label {
+  transform: translateX(calc(var(--btn-shift) * -1));
+  transition: transform 0.6s var(--btn-ease);
+}
+
+.btn__arrow {
+  position: absolute;
+  top: 50%;
+  width: var(--btn-arrow-size);
+  height: var(--btn-arrow-size);
+  margin-top: calc(var(--btn-arrow-size) / -2);
+  fill: currentColor;
+  transition: transform 0.6s var(--btn-ease);
+}
+
+.btn__arrow--out {
+  right: var(--btn-arrow-inset);
+}
+
+.btn__arrow--in {
+  left: var(--btn-arrow-inset);
+  transform: translateX(-64px);
+}
+
+/* Ghost: floods with the foreground colour and the text inverts to black. */
+.btn--ghost .btn__fill {
+  background: var(--fg);
+}
+
+/* Accent: the reverse. The fill drains to the page colour, leaving an accent
+   outline with accent text, and a ring pulses outward. */
+.btn--accent .btn__fill {
+  background: var(--bg);
+}
+
+.btn--accent.btn--arrow {
+  box-shadow: 0 0 0 0 var(--accent);
+}
+
+@media (hover: hover) {
+  .btn--arrow:hover .btn__fill {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .btn--arrow:hover .btn__label {
+    transform: translateX(var(--btn-shift));
+  }
+
+  .btn--arrow:hover .btn__arrow--out {
+    transform: translateX(64px);
+  }
+
+  .btn--arrow:hover .btn__arrow--in {
+    transform: translateX(0);
+  }
+
+  .btn--ghost.btn--arrow:hover {
+    border-color: var(--fg);
+    color: var(--black);
+  }
+
+  .btn--accent.btn--arrow:hover {
+    color: var(--accent);
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
 /* Type */
 .display {
   max-width: 13ch;

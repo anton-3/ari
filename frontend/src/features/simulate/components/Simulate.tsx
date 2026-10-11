@@ -7,7 +7,7 @@ export function Simulate() {
     <section id={site.sections.demo} className="demo">
       <div className="container demo__inner">
         <h2 className="display display--md">See Ari in action.</h2>
-        <ButtonLink className="demo__cta">Simulate</ButtonLink>
+        <ButtonLink className="demo__cta" arrow href="/dashboard.html">Open Dashboard</ButtonLink>
       </div>
     </section>
   )

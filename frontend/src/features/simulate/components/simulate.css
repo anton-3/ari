@@ -22,8 +22,11 @@
 .demo .demo__cta {
   height: 56px;
   margin-top: 40px;
-  padding: 0 40px;
+  padding: 0 60px;
   font-size: 15px;
+  --btn-arrow-size: 18px;
+  --btn-arrow-inset: 24px;
+  --btn-shift: 12px;
 }
 
 @media (max-width: 640px) {
