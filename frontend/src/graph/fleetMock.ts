@@ -151,6 +151,16 @@ export class MockFleet {
     return { status: 202 }
   }
 
+  reboot(id: string): { status: number; error?: string } {
+    const node = this.nodes.find((n) => n.id === id)
+    if (!node) return { status: 404, error: 'node not found' }
+    if (!node.deletable || node.status !== 'running') return { status: 409, error: 'node cannot reboot now' }
+    node.bornAt = Date.now()
+    node.status = 'rebooting'
+    node.offlineUntil = 0
+    return { status: 202 }
+  }
+
   tick(surge: boolean): void {
     const now = Date.now()
     const t = (now - this.t0) / 1000
@@ -158,7 +168,7 @@ export class MockFleet {
     for (const n of this.nodes) {
       const age = (now - n.bornAt) / 1000
       if (n.deleteAt !== null) n.status = 'deleting'
-      else if (age < PROVISION_S) n.status = 'provisioning'
+      else if (age < PROVISION_S) n.status = n.status === 'rebooting' ? 'rebooting' : 'provisioning'
       else if (age < BOOT_S) n.status = 'booting'
       else if (now < n.offlineUntil) n.status = 'offline'
       else {

@@ -18,6 +18,7 @@ export const API = {
   fleetRoles: `${TELEMETRY_BASE_URL}/api/fleet/roles`,
   fleetNodes: `${TELEMETRY_BASE_URL}/api/fleet/nodes`,
   alerts: (limit = 50) => `${TELEMETRY_BASE_URL}/api/alerts?limit=${limit}`,
+  fleetReboot: (id: string) => `${TELEMETRY_BASE_URL}/api/fleet/nodes/${encodeURIComponent(id)}/reboot`,
   fleetNode: (id: string) => `${TELEMETRY_BASE_URL}/api/fleet/nodes/${encodeURIComponent(id)}`,
 }
 

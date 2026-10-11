@@ -133,6 +133,7 @@ interface Body {
   ta: number
   alpha: number
   ex: number
+  bootScale: number
   bootStart: number
   bootPhase: string
   lastIssueCount: number
@@ -436,7 +437,7 @@ export default function IsoView(props: Props) {
       if (!b) {
         b = {
           id: n.id, node: n, pending: n.id.startsWith('pending-'), x: p.x, y: p.y, gx: p.x, gy: p.y, ox: 0, oy: 0,
-          pinned: p.pin, ta: 0, alpha: 0, ex: 0, bootStart: performance.now(), bootPhase: n.status,
+          pinned: p.pin, ta: 0, alpha: 0, ex: 0, bootScale: 1, bootStart: performance.now(), bootPhase: n.status,
           lastIssueCount: (n.issues ?? []).length,
           bornAt: n.activation && Date.now() - n.activation.startedAt < 15000 ? performance.now() : performance.now() - 1000,
         }
@@ -1509,8 +1510,11 @@ export default function IsoView(props: Props) {
         const nIssues = (n.issues ?? []).length
         const surgeTint = surge
         b.ta += ((level || surgeTint ? 1 : 0) - b.ta) * ease(6)
-        const statusA = n.status === 'deleting' ? 0.25 : n.status === 'provisioning' || n.status === 'booting' ? 0.55 : n.status === 'offline' ? 0.7 : 1
+        const statusA = n.status === 'deleting' ? 0.25 : n.status === 'rebooting' || n.status === 'provisioning' || n.status === 'booting' ? 0.55 : n.status === 'offline' ? 0.7 : 1
         b.alpha += (statusA - b.alpha) * ease(4)
+        const bootAge = (now - b.bootStart) / 1000
+        const scaleTarget = n.status === 'rebooting' ? 0.15 : n.status === 'booting' ? Math.min(0.9, 0.15 + bootAge * 0.12) : 1
+        b.bootScale += (scaleTarget - b.bootScale) * ease(5)
         const tcol = surge ? (n.role === 'app' ? C.red : C.amber) : level === 'amber' ? C.amber : C.red
         const dim = dimOf(b)
         const a = b.alpha * dim
@@ -1545,18 +1549,19 @@ export default function IsoView(props: Props) {
               ctx.stroke()
             }
             const ringR = R + 12
-            if (n.activation && (n.activation.status !== 'ready' || Date.now() - (n.activation.completedAt ?? 0) < 1000) || n.status === 'provisioning' || n.status === 'booting') {
+            if (n.activation && (n.activation.status !== 'ready' || Date.now() - (n.activation.completedAt ?? 0) < 1000) || n.status === 'rebooting' || n.status === 'provisioning' || n.status === 'booting') {
               const t = (now - b.bootStart) / 1000
               const prog = n.activation?.progress ?? (n.status === 'provisioning' ? 0.4 * (1 - Math.exp(-t / 3)) : 0.4 + 0.55 * (1 - Math.exp(-t / 5)))
               const g = groundEllipse(X, Y, 0, ringR)
               ctx.strokeStyle = 'rgba(40,56,84,0.15)'; ctx.lineWidth = 2.5
               ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, 0, Math.PI * 2); ctx.stroke()
-              const gradient = ctx.createConicGradient(-Math.PI / 2, g.cx, g.cy)
+              const start = -Math.PI / 2 + (!red && !n.activation ? now / 900 : 0)
+              const gradient = ctx.createConicGradient(start, g.cx, g.cy)
               gradient.addColorStop(0, C.red)
               gradient.addColorStop(0.5, C.amber)
               gradient.addColorStop(1, '#36bb80')
               ctx.strokeStyle = gradient
-              ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prog); ctx.stroke()
+              ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, start, start + Math.PI * 2 * prog); ctx.stroke()
             }
             const jobs = jobsByNode.get(b.id) ?? []
             jobs.forEach((r, i) => {
@@ -1577,7 +1582,7 @@ export default function IsoView(props: Props) {
           drawJobs.push({
             depth: X + Y,
             draw: () => {
-              const growth = red ? 1 : clamp((now - b.bornAt) / 500, 0, 1)
+              const growth = red ? 1 : clamp((now - b.bornAt) / 500, 0, 1) * b.bootScale
               ctx.save()
               const anchor = P(X, Y, 0)
               ctx.translate(anchor.x, anchor.y)
@@ -1765,7 +1770,7 @@ export default function IsoView(props: Props) {
             continue
           }
           const n = j.b.node
-          const tag = n.status === 'provisioning' || n.status === 'booting' || n.status === 'deleting' || n.status === 'offline' ? n.status.toUpperCase() : ''
+          const tag = n.status === 'rebooting' || n.status === 'provisioning' || n.status === 'booting' || n.status === 'deleting' || n.status === 'offline' ? n.status.toUpperCase() : ''
           ctx.font = `600 11px ${SANS}`
           const label = truncate(ctx, n.label, 150)
           const lw = ctx.measureText(label).width

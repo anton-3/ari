@@ -132,3 +132,13 @@ export async function deleteInstance(id, expectedLabel) {
   await api(`/linode/instances/${inst.id}`, 'DELETE');
   return true;
 }
+
+// Reboot preserves disks and identity; apply the same fleet ownership guard.
+export async function rebootInstance(id) {
+  if (DENY_IDS.has(String(id))) { const e = new Error('protected instance'); e.status = 403; throw e; }
+  const inst = await getInstance(id);
+  assertAriNet(inst);
+  if (inst.status !== 'running') { const e = new Error('instance is not running'); e.status = 409; throw e; }
+  await api(`/linode/instances/${inst.id}/reboot`, 'POST');
+  return true;
+}

@@ -43,9 +43,10 @@ The infrastructure card renders the isometric fleet map from `src/graph`
 (`IsoView`, fed by `useFleet`), the same scene as `/graph.html`: pan, wheel zoom,
 double-click to refit, click a server to open its files and symbols, Esc to step
 out, drag servers on the grid. Selecting a server, file, symbol or connection
-shows a small detail popup in the map's top-right corner. Delete on a selected
-server (or "destroy server" in the popup) opens a type-the-label confirmation;
-against a live fleet this deletes a real Linode server. The Ari controller node
+shows a small detail popup in the map's top-right corner. The "reboot server" button restarts the selected running server while preserving
+its disks and map position. The block shrinks during shutdown, then grows back
+with the existing boot loading ring until telemetry confirms it is ready.
+The Ari controller node
 and the add-server buttons are hidden for now.
 
 Every server opens into layers that suit it: app, worker and traffic nodes into

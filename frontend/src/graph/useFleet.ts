@@ -32,6 +32,7 @@ export interface FleetApi {
   codemap: Codemap | null
   addNode: (role: string, pos?: { x: number; y: number }) => void
   deleteNode: (id: string, label: string) => Promise<boolean>
+  rebootNode: (id: string) => Promise<boolean>
   retry: () => void
 }
 
@@ -381,12 +382,34 @@ export function useFleet(sim: boolean, surge: boolean): FleetApi {
     return false
   }, [publish, pushLog])
 
+  const rebootNode = useCallback(async (id: string): Promise<boolean> => {
+    const node = lastFleetRef.current?.nodes.find((n) => n.id === id)
+    if (!node || node.status !== 'running') return false
+    try {
+      if (sourceRef.current === 'sim') {
+        const result = mockRef.current?.reboot(id)
+        if (result?.status !== 202) throw new Error(result?.error ?? 'reboot failed')
+      } else {
+        if (sourceRef.current !== 'live') throw new Error('no fleet feed')
+        const res = await fetch(API.fleetReboot(id), { method: 'POST' })
+        if (!res.ok) throw new Error(await readError(res))
+      }
+      const f = lastFleetRef.current
+      if (f) publish({ ...f, nodes: f.nodes.map((n) => n.id === id ? { ...n, status: 'rebooting' } : n) })
+      pushLog('info', `rebooting ${node.label}`)
+      return true
+    } catch (error) {
+      pushLog('error', `reboot ${node.label} failed: ${(error as Error).message}`)
+      return false
+    }
+  }, [publish, pushLog])
+
   const retry = useCallback(() => {
     if (sourceRef.current === 'offline') setSrc('connecting')
     pollNowRef.current()
   }, [])
 
-  return { fleet, roles, source, log, alerts, simAgents, codemap, addNode, deleteNode, retry }
+  return { fleet, roles, source, log, alerts, simAgents, codemap, addNode, deleteNode, rebootNode, retry }
 }
 
 export function toMs(ts: number | string | undefined): number {

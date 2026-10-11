@@ -204,6 +204,12 @@ app.post('/api/fleet/unblock-ips', localOnly, async (req, res) => {
   } catch (e) { sendErr(res, e); }
 });
 
+app.post('/api/fleet/nodes/:id/reboot', localDemoOnly, async (req, res) => {
+  try {
+    res.status(202).json(await fleet.rebootNode(req.params.id));
+  } catch (e) { sendErr(res, e); }
+});
+
 app.delete('/api/fleet/nodes/:id', localOnly, async (req, res) => {
   try {
     res.status(202).json(await fleet.deleteNode(req.params.id, req.get('X-Confirm-Label')));
