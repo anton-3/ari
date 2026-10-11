@@ -142,9 +142,10 @@ app.post('/api/fleet/activate-web', localOnly, (req, res) => {
   catch (e) { sendErr(res, e); }
 });
 
+const isDemoAttacker = r => /^203\.0\.113\.(10|11|12|13|14)$/.test(r.ip);
 app.get('/api/demo/status', localOnly, (_req, res) => res.json({
   resetting: !!fleet.demo.resetting,
-  cooldownRemainingMs: Math.max(0, ...fleet.requests.window(180).filter(r => /^203\.0\.113\.(10|11|12|13|14)$/.test(r.ip)).map(r => r.ts + 180000 - Date.now())),
+  cooldownRemainingMs: Math.max(0, ...fleet.requests.window(180).filter(isDemoAttacker).map(r => r.ts + 180000 - Date.now())),
   metrics: fleet.requests.snapshot(fleet.incidentView()), incident: fleet.incidentView(),
   serving: fleet.demo.serving, operations: fleet.demo.operations, notifications: fleet.demo.notifications,
   standby: [...fleet.instances.keys()].map(id => fleet.nodeView(id)).find(n => n.label === 'web-03') || null,
@@ -180,6 +181,14 @@ app.post('/api/demo/standby', localOnly, async (_req, res) => {
   } catch (e) { sendErr(res, e); }
 });
 
+// Drop observed attack requests instead of waiting for them to age out of the
+// three-minute window. Baseline traffic is untouched.
+app.post('/api/demo/scrub', localDemoOnly, (_req, res) => {
+  const removed = fleet.requests.purge(isDemoAttacker);
+  if (removed) fleet.publish();
+  res.json({ ok: true, removed });
+});
+
 app.post('/api/demo/reset', localDemoOnly, async (_req, res) => {
   try {
     if (Object.values(fleet.demo.operations).some(o => !['ready', 'failed'].includes(o.status))) throw Object.assign(new Error('activation is still running'), { status: 409 });
@@ -191,6 +200,7 @@ app.post('/api/demo/reset', localDemoOnly, async (_req, res) => {
     if (lb) fleet.issues.set(lb.id, 'ddos', null);
     fleet.saveDemo();
     if (!await fleet.syncUpstream()) throw Object.assign(new Error('Could not remove web-03 from the load balancer upstream'), { status: 502 });
+    fleet.requests.purge(isDemoAttacker);
     fleet.publish();
     res.json({ ok: true });
   } catch (e) { sendErr(res, e); }

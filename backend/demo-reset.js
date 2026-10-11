@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { api, remote, prepareNextTake, preflight, verifyStandby } from './demo.js';
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL('../', import.meta.url));
-const slug = process.env.GITHUB_REPO || 'anton-3/hackmid2026';
+const slug = process.env.GITHUB_REPO || 'anton-3/ari';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Restrict destructive cleanup to the branch recorded by our own PR job. A
@@ -48,7 +48,7 @@ export async function cleanupDemoPr(job, { run = exec, repository = slug } = {})
 const STEPS = [
  ['stop', 'Stop attack traffic'], ['infra', 'Remove bans and hide web-03'],
  ['github', 'Close the demo PR and remove its branch'], ['prepare', 'Prepare the next PR and warm standby'],
- ['drain', 'Wait for the real request window to clear'], ['verify', 'Verify everything is ready'],
+ ['drain', 'Scrub attack traffic from the request window'], ['verify', 'Verify everything is ready'],
 ];
 export class DemoReset {
  constructor({ file = fileURLToPath(new URL('./.demo/reset.json', import.meta.url)), jobs, checkBusy = () => false, dependencies = {} } = {}) {
@@ -126,12 +126,14 @@ export class DemoReset {
    this.step('drain',async()=>{
     const deadline=Date.now()+240000;let stable=0;
     while(Date.now()<deadline) {
+     // Late log lines can still arrive after the generator stops, so scrub every pass.
+     await d.api('/api/demo/scrub',{});
      const s=await d.api('/api/demo/status');
      const ms=s.cooldownRemainingMs;
      const step=this.state.steps.find(s=>s.id==='drain');
-     step.detail=ms>0?`${Math.ceil(ms/1000)} seconds of observed attack traffic remain`:'Checking the baseline';this.save();
+     step.detail=ms>0?'Scrubbing late attack requests':'Checking the baseline';this.save();
      const clean=ms===0&&!s.metrics.stale&&s.metrics.requestsLast180s>=90&&s.metrics.requestsLast180s<=600;
-     stable=clean?stable+1:0;if(stable>=2)return 'Real requests have returned to the baseline';
+     stable=clean?stable+1:0;if(stable>=2)return 'Attack traffic scrubbed; baseline requests only';
      await d.sleep(1000);
     }
     throw new Error('Traffic window did not normalize; check the request feed and baseline generator');

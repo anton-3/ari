@@ -29,6 +29,12 @@ export class RequestTelemetry {
     for (const [id, record] of this.entries) if (record.ts < this.observedAt - 185000) this.entries.delete(id);
     return fresh;
   }
+  // Demo reset rewrites history: matching records vanish from every window and series.
+  purge(match) {
+    let removed = 0;
+    for (const [id, record] of this.entries) if (match(record)) { this.entries.delete(id); removed++; }
+    return removed;
+  }
   window(seconds, now = this.observedAt) {
     return [...this.entries.values()].filter(r => r.ts > now - seconds * 1000 && r.ts <= now);
   }

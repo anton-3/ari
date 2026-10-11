@@ -20,6 +20,15 @@ test('counts requests once, includes rejected traffic, expires exactly at the wi
   requests.ingest({ now: 1180, entries: [] });
   assert.equal(requests.snapshot({}, 1180000).requestsLast180s, 0);
 });
+test('purge rewrites history: attack records leave the window and series, baseline stays', () => {
+  const requests = new RequestTelemetry();
+  requests.ingest({ now: 1000, entries: [entry('a', 999), entry('b', 998, '203.0.113.14'), entry('c', 999, '198.51.100.20')] });
+  assert.equal(requests.purge(r => r.ip.startsWith('203.0.113.')), 2);
+  const snapshot = requests.snapshot({}, 1000000);
+  assert.equal(snapshot.requestsLast180s, 1);
+  assert.equal(snapshot.series.at(-1).rps, 0.2);
+  assert.equal(snapshot.stale, false);
+});
 test('stale and missing observations are explicit, while an empty observed window is zero', () => {
   const requests = new RequestTelemetry();
   assert.equal(requests.snapshot().requestsLast180s, null);

@@ -103,7 +103,7 @@ export async function preflight(nodes) {
   for (const key of ['TWILIO_SID', 'TWILIO_AUTH_TOKEN', 'PUBLIC_HOST', 'OPENAI_API_KEY']) if (!process.env[key]) errors.push(`${key} is missing`);
   const checks = [];
   checks.push((async () => { try {
-    const { stdout } = await exec('gh', ['api', 'repos/anton-3/hackmid2026', '--jq', '.permissions.push'], { timeout: 10000 });
+    const { stdout } = await exec('gh', ['api', `repos/${process.env.GITHUB_REPO || 'anton-3/ari'}`, '--jq', '.permissions.push'], { timeout: 10000 });
     if (stdout.trim() !== 'true') throw new Error('no push permission');
   } catch { errors.push('GitHub push access failed'); } })());
   checks.push((async () => { try {
@@ -143,7 +143,7 @@ try {
   else if (command === 'stop' || command === 'reset') {
     await remote(nodes.find(n => n.role === 'traffic'), 'systemctl stop ari-demo-attack 2>/dev/null || true');
     if (command === 'reset') await api('/api/demo/reset', {});
-    console.log(command === 'reset' ? 'Reset complete. Wait 3 minutes for the observed traffic window to normalize; prepare a fresh PR worktree before the next PR take.' : 'Attack generator stopped.');
+    console.log(command === 'reset' ? 'Reset complete; attack traffic scrubbed from the request window. Prepare a fresh PR worktree before the next PR take.' : 'Attack generator stopped.');
   } else throw new Error('Use prepare, preflight, status, stop or reset');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

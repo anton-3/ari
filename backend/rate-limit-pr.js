@@ -11,7 +11,7 @@ import { providerFetch } from './voice-http.js';
 const exec = promisify(execFile);
 const REPO = fileURLToPath(new URL('../', import.meta.url));
 const STATE = fileURLToPath(new URL('./.demo/pr-prepared.json', import.meta.url));
-const REPO_SLUG = process.env.GITHUB_REPO || 'anton-3/hackmid2026';
+const REPO_SLUG = process.env.GITHUB_REPO || 'anton-3/ari';
 const LB_FILE = 'telemetry/fleet-roles/lb.sh';
 export const ZONE = 'limit_req_zone $binary_remote_addr zone=ari_rl:10m rate=10r/s;';
 export const APPLY = 'limit_req zone=ari_rl burst=20 nodelay;';

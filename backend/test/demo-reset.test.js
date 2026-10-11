@@ -15,6 +15,7 @@ function setup(overrides={}) {
    events.push(route);
    if(route==='/api/fleet')return {nodes:[{role:'traffic'}]};
    if(route==='/api/demo/status')return {incident:{active:false,blockedIps:[]},standby:{id:'standby',status:'running',servingState:'standby',inUpstream:false},metrics:{stale:false,requestsLast180s:180},cooldownRemainingMs:cool};
+   if(route==='/api/demo/scrub')cool=0;
    if(route==='/api/demo/maintenance')events.push(`maintenance:${body.resetting}`);
    return {ok:true};
   },
@@ -34,6 +35,7 @@ test('reset is durable, deduplicated, pauses incidents, drains real traffic and 
  assert.equal(events.filter(e=>e==='stop').length,1);
  assert.ok(events.indexOf('maintenance:true')<events.indexOf('stop'));
  assert.ok(events.indexOf('verify')<events.indexOf('maintenance:false'));
+ assert.ok(events.includes('/api/demo/scrub'));
  assert.equal(JSON.parse(fs.readFileSync(reset.file)).status,'done');
  fs.rmSync(dir,{recursive:true});
 });

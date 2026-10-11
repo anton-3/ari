@@ -74,7 +74,7 @@ export function DemoReset({ source }: { source: FeedSource }) {
     <dialog ref={dialog} className="dashboard-dialog reset-dialog" onCancel={() => setOpen(false)} onClose={() => setOpen(false)} aria-labelledby="reset-heading">
       <div className="dialog-heading"><h2 id="reset-heading">Reset to pre-demo state</h2></div>
       <p className="dialog-note">Stop the attack, remove IP bans, hide web-03 on warm standby, close the latest demo PR and delete its branch, then prepare and verify the next take.</p>
-      <p className="dialog-note">Real attack requests must age out of the three-minute window. Other reset steps run in parallel.</p>
+      <p className="dialog-note">Attack requests are scrubbed from the three-minute window, so the reset finishes in seconds.</p>
       {showProgress && state.steps.length > 0 && <ol className="reset-steps" aria-label="Reset progress">
         {state.steps.map(step => <li key={step.id} data-status={step.status}>
           <span className={step.status === 'running' ? 'reset-spinner' : 'reset-step-icon'} aria-label={step.status}>{step.status === 'done' ? '✓' : step.status === 'failed' ? '!' : step.status === 'pending' ? '○' : ''}</span>
