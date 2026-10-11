@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "demo": "node --env-file-if-exists=../.env --env-file-if-exists=.env demo.js",
+    "demo:rehearse": "node --env-file-if-exists=../.env --env-file-if-exists=.env demo-rehearsal.js",
     "test": "node --test test/*.test.js",
     "start": "node --env-file-if-exists=../.env --env-file-if-exists=.env server.js",
     "call": "node --env-file-if-exists=../.env --env-file-if-exists=.env call.js",

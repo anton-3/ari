@@ -65,7 +65,11 @@ export class DeepgramStream extends EventEmitter {
       try {
         const message = JSON.parse(raw);
         if (message.type === "Error") return this.emit("fault", new Error("Deepgram provider error"));
-        if (message.type === "SpeechStarted") this.emit("speechStarted");
+        if (message.type === "SpeechStarted") { this.speechConfirmed = false; this.emit("speechStarted"); }
+        if (message.type === 'Results' && message.channel?.alternatives?.[0]?.transcript?.trim() && !this.speechConfirmed) {
+          this.speechConfirmed = true;
+          this.emit('speechConfirmed');
+        }
         if (message.type === "Metadata") this.emit("metadata", message.model_info);
         this.transcripts.accept(message);
       } catch { this.emit("fault", new Error("Invalid Deepgram message")); }
