@@ -42,15 +42,33 @@ telemetry endpoint with WebSocket support.
 The infrastructure card renders the isometric fleet map from `src/graph`
 (`IsoView`, fed by `useFleet`), the same scene as `/graph.html`: pan, wheel zoom,
 double-click to refit, click a server to open its files and symbols, Esc to step
-out, drag servers on the grid. The buttons in the card heading add a server
-(click, or drag onto the map); Delete on a selected server opens a
-type-the-label confirmation before destroying it. Against a live fleet these
-create and delete real Linode servers.
+out, drag servers on the grid. Selecting a server, file, symbol or connection
+shows a small detail popup in the map's top-right corner. Delete on a selected
+server (or "destroy server" in the popup) opens a type-the-label confirmation;
+against a live fleet this deletes a real Linode server. The Ari controller node
+and the add-server buttons are hidden for now.
+
+Every server opens into layers that suit it: app, worker and traffic nodes into
+their source files, then routes and functions; the Postgres node into tables,
+then columns and indexes; the Redis node into keys, then hash fields; the nginx
+node into config files, then blocks, locations and directives. The non-code
+layers come from `src/graph/inventorySnapshot.ts`, a baked copy of what the live
+servers held, so they open on the first frame; the telemetry service re-reads
+the servers every minute and its answer in `/api/fleet/codemap` replaces the
+baked copy. Regenerate the snapshot with `npm run snapshot:inventory` in
+`telemetry/`.
 
 The fleet API is localhost-only. When it has no servers or cannot be reached,
 the card shows the built-in simulated fleet after a four-second grace period and
 says so in its footer; it switches back as soon as real servers appear. Server
 positions are shared with `/graph.html` through `localStorage`.
+
+## Ari activity
+
+The bottom card is a teletype of Ari's own narration (`GET /api/reasoning` and
+`reasoning` WebSocket frames), agent events, and warning or error log lines,
+oldest at the top with the newest line entering at the bottom. Ordinary traffic
+logs only fill the card while there is nothing else to show.
 
 ## Reference values without an API source
 
@@ -60,6 +78,3 @@ and agent/call status are not fabricated. The findings footer identifies watched
 projects; navigation opens findings, event, agent, and integration details.
 The local telemetry service itself generates synthetic traffic; its connection
 status means a working feed, not production traffic.
-
-“Push to talk” shows `alert('not implemented yet')`, as requested. It does not
-request microphone access, provision instances, or make calls.

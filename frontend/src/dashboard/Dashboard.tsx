@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Logo } from '@/components/ui/Logo'
 import './dashboard.css'
 import { useTelemetry } from './useTelemetry'
@@ -17,25 +18,126 @@ const FEED_LABELS: Record<FeedSource, string> = {
   connecting: 'connecting',
   offline: 'offline · last snapshot',
 }
+const PROJECTS = ['myfiat']
+
+function ProjectSwitcher() {
+  const [project, setProject] = useState(PROJECTS[0])
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    root.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus()
+    function onPointerDown(event: PointerEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false)
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      trigger.current?.focus()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  function moveFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const items = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>('button'),
+    ]
+    const step = event.key === 'ArrowDown' ? 1 : -1
+    const index = items.indexOf(document.activeElement as HTMLElement)
+    items[(index + step + items.length) % items.length]?.focus()
+  }
+
+  return (
+    <div className="project-switcher" ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="project-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? 'project-menu' : undefined}
+        aria-label={`project: ${project}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span>{project}</span>
+        <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
+          <path
+            d="M1 1l4 4 4-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open && (
+        <div
+          className="project-menu"
+          id="project-menu"
+          role="menu"
+          aria-label="projects"
+          onKeyDown={moveFocus}
+        >
+          {PROJECTS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              role="menuitemradio"
+              aria-checked={item === project}
+              onClick={() => {
+                setProject(item)
+                setOpen(false)
+                trigger.current?.focus()
+              }}
+            >
+              <span>{item}</span>
+              {item === project && (
+                <svg
+                  viewBox="0 0 12 10"
+                  width="12"
+                  height="10"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M1 5.5l3.2 3L11 1.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Dashboard() {
-  const { metrics, logs, vulns, agents, source } = useTelemetry()
-  const [now, setNow] = useState(() => Date.now())
+  const { metrics, logs, vulns, agents, activity, source } = useTelemetry()
   const [view, setView] = useState<View | null>(null)
   const [selected, setSelected] = useState<Vuln | null>(null)
   const [filter, setFilter] = useState('')
   const dialog = useRef<HTMLDialogElement>(null)
   const currentFinding =
     vulns.find((finding) => finding.id === selected?.id) ?? selected
-  const project = vulns[0]?.project ?? 'MyFiat'
   const issues = logs.filter((log) =>
     ['warn', 'error', 'critical'].includes(log.level),
   )
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
   useEffect(() => {
     if (view) dialog.current?.showModal()
     else dialog.current?.close()
@@ -66,9 +168,7 @@ export default function Dashboard() {
               <Logo size={24} />
               <span>ari</span>
             </a>
-            <span className="dashboard-project">
-              {project.toLowerCase()} / local
-            </span>
+            <ProjectSwitcher />
           </div>
           <nav className="dashboard-nav" aria-label="Dashboard navigation">
             <button
@@ -91,9 +191,6 @@ export default function Dashboard() {
           </nav>
         </div>
         <div className="dashboard-header-right">
-          <span className="deployment-label">
-            local telemetry{metrics?.mode ? ` · ${metrics.mode}` : ''}
-          </span>
           <span
             className="feed-status"
             title={
@@ -109,18 +206,12 @@ export default function Dashboard() {
             <i className={`status-square ${source}`} />
             {FEED_LABELS[source]}
           </span>
-          <time
-            className="mono dashboard-clock"
-            dateTime={new Date(now).toISOString()}
-          >
-            {new Date(now).toLocaleTimeString('en-GB')}
-          </time>
         </div>
       </header>
       <main className="dashboard-main">
         <div className="dashboard-left">
           <InfrastructureMap metrics={metrics} agents={agents} />
-          <AriConsole logs={logs} source={source} />
+          <AriConsole activity={activity} logs={logs} source={source} />
         </div>
         <div className="dashboard-right">
           <UsersPanel metrics={metrics} />
@@ -233,13 +324,9 @@ export default function Dashboard() {
         {view === 'agents' && (
           <>
             <p className="dialog-note">
-              Agent status and scan progress are unavailable. Configure a
-              contact number to reach Ari by phone.
+              Ari works alongside your on-call. Reach it by phone on the contact
+              number below.
             </p>
-            <div className="integration-row">
-              <span>push to talk</span>
-              <span>not implemented yet</span>
-            </div>
             <div className="integration-row">
               <span>phone</span>
               <span>{ARI_PHONE || 'not configured'}</span>

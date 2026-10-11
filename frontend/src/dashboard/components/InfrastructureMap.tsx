@@ -1,19 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReduceMotion'
 import ErrorBoundary from '../../graph/ErrorBoundary'
 import IsoView, { C, PROTO_COLOR } from '../../graph/IsoView'
 import type { IsoSel } from '../../graph/IsoView'
-import { itemsOf, treeFor } from '../../graph/codetree'
-import { fmtRate } from '../../graph/helpers'
+import {
+  chainOf,
+  errFrac,
+  factsOf,
+  issuesUnder,
+  itemsOf,
+  routeOf,
+  treeFor,
+} from '../../graph/codetree'
+import { SEV_RANK, fmtMem, fmtRate } from '../../graph/helpers'
 import { forgetPos } from '../../graph/positions'
 import { useFleet } from '../../graph/useFleet'
 import type { FleetApi } from '../../graph/useFleet'
-import type { Agent, FleetNode } from '../../graph/types'
+import type {
+  Agent,
+  Codemap,
+  Fleet,
+  FleetIssue,
+  FleetLink,
+  FleetNode,
+} from '../../graph/types'
 import type { Metrics } from '../types'
 
 // The simulator only takes over once the real feed has had this long to answer.
 const SIM_GRACE_MS = 4000
 const INSETS = { top: 20, right: 20, bottom: 20, left: 20 }
+// Room the camera leaves for the detail popup while something is selected.
+const DETAIL_INSET = 272
+// Not drawn for now: the controller and its control links.
+const HIDDEN_ROLES = new Set(['controller'])
 const SYNTHETIC_ROLES = new Set(['controller', 'internet'])
 const LEGEND: [string, string][] = [
   ['http', PROTO_COLOR.http],
@@ -83,7 +103,21 @@ function FleetCard({
   const [confirm, setConfirm] = useState<FleetNode | null>(null)
   const [typed, setTyped] = useState('')
 
-  const fleet = fl?.fleet ?? null
+  const feed = fl?.fleet ?? null
+  const fleet = useMemo<Fleet | null>(() => {
+    if (!feed) return null
+    const hidden = new Set(
+      feed.nodes.filter((node) => HIDDEN_ROLES.has(node.role)).map((n) => n.id),
+    )
+    if (!hidden.size) return feed
+    return {
+      ...feed,
+      nodes: feed.nodes.filter((node) => !hidden.has(node.id)),
+      links: feed.links.filter(
+        (link) => !hidden.has(link.source) && !hidden.has(link.target),
+      ),
+    }
+  }, [feed])
   const codemap = fl?.codemap ?? null
   const nodes = fleet?.nodes ?? []
   const links = fleet?.links ?? []
@@ -98,6 +132,10 @@ function FleetCard({
   const selectedNode =
     selected?.kind === 'node'
       ? nodes.find((node) => node.id === selected.id)
+      : undefined
+  const selectedLink =
+    selected?.kind === 'link'
+      ? links.find((link) => link.id === selected.id)
       : undefined
 
   // Delete/Backspace asks to destroy the selected server; Esc steps out one level.
@@ -157,7 +195,6 @@ function FleetCard({
     (sum, link) => sum + Math.max(0, link.bytesPerSec),
     0,
   )
-  const addable = fl?.roles.filter((role) => role.addable) ?? []
 
   return (
     <section
@@ -169,28 +206,7 @@ function FleetCard({
       onPointerLeave={() => (hovered.current = false)}
     >
       <div className="panel-heading">
-        <div className="fleet-heading">
-          <h2 id="infrastructure-title">infrastructure</h2>
-          {fl && fleet && addable.length > 0 && (
-            <div className="fleet-add" aria-label="Add a server">
-              {addable.map((role) => (
-                <button
-                  key={role.role}
-                  type="button"
-                  draggable
-                  title={`${role.description} — click to add, or drag onto the map`}
-                  onClick={() => fl.addNode(role.role)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData('text/ari-role', role.role)
-                    event.dataTransfer.effectAllowed = 'copy'
-                  }}
-                >
-                  + {role.label.toLowerCase()}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <h2 id="infrastructure-title">infrastructure</h2>
         <div className="health-legend">
           {LEGEND.map(([label, color]) => (
             <span key={label}>
@@ -210,7 +226,7 @@ function FleetCard({
               codemap={codemap}
               live={!simulated}
               reduced={reducedMotion}
-              rightInset={0}
+              rightInset={selected ? DETAIL_INSET : 0}
               insets={INSETS}
               showControl={false}
               selected={selected}
@@ -221,6 +237,29 @@ function FleetCard({
           </ErrorBoundary>
         ) : (
           <div className="panel-empty">waiting for fleet telemetry…</div>
+        )}
+        {selectedNode && (
+          <NodeDetail
+            node={selectedNode}
+            path={selected?.kind === 'node' ? (selected.path ?? []) : []}
+            codemap={codemap}
+            onClose={() => setPicked(null)}
+            onDestroy={
+              canDelete(selectedNode)
+                ? () => {
+                    setTyped('')
+                    setConfirm(selectedNode)
+                  }
+                : undefined
+            }
+          />
+        )}
+        {selectedLink && (
+          <LinkDetail
+            link={selectedLink}
+            nodes={nodes}
+            onClose={() => setPicked(null)}
+          />
         )}
       </div>
       <footer className="infrastructure-footer">
@@ -290,5 +329,197 @@ function FleetCard({
         </dialog>
       )}
     </section>
+  )
+}
+
+const severityClass = (severity: string) =>
+  (SEV_RANK[severity] ?? 0) >= 3 ? 'is-critical' : 'is-warning'
+
+function DetailShell({
+  title,
+  sub,
+  label,
+  onClose,
+  children,
+}: {
+  title: string
+  sub: string
+  label: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  return (
+    <aside className="fleet-detail" aria-label={label}>
+      <header>
+        <div>
+          <strong title={title}>{title}</strong>
+          <span title={sub}>{sub}</span>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close details">
+          ×
+        </button>
+      </header>
+      {children}
+    </aside>
+  )
+}
+
+function Issues({ issues }: { issues: FleetIssue[] }) {
+  if (!issues.length) return null
+  const sorted = issues
+    .slice()
+    .sort((a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0))
+  return (
+    <ul className="fleet-detail-issues">
+      {sorted.slice(0, 3).map((issue) => (
+        <li key={issue.id} title={issue.detail}>
+          <i className={severityClass(issue.severity)} />
+          {issue.title}
+        </li>
+      ))}
+      {sorted.length > 3 && <li className="more">+{sorted.length - 3} more</li>}
+    </ul>
+  )
+}
+
+function NodeDetail({
+  node,
+  path,
+  codemap,
+  onClose,
+  onDestroy,
+}: {
+  node: FleetNode
+  path: string[]
+  codemap: Codemap | null
+  onClose: () => void
+  onDestroy?: () => void
+}) {
+  const tree = treeFor(codemap, node.role)
+  const items = itemsOf(tree, path)
+  const item = items[items.length - 1]
+
+  // A file or symbol is open: describe that, with the server as context.
+  if (item && tree) {
+    const symbol = item.sym
+    const route = routeOf(tree, item)
+    const facts = factsOf(item)
+    return (
+      <DetailShell
+        title={item.label}
+        sub={`${item.kind} · ${node.label}`}
+        label={facts ? 'Selected item' : 'Selected code'}
+        onClose={onClose}
+      >
+        <dl>
+          {facts ? (
+            <>
+              {(facts.info ?? []).map(([key, value]) => (
+                <Fragment key={key}>
+                  <dt>{key}</dt>
+                  <dd title={value}>{value}</dd>
+                </Fragment>
+              ))}
+              {item.children.length > 0 && (
+                <>
+                  <dt>inside</dt>
+                  <dd>{item.children.length}</dd>
+                </>
+              )}
+            </>
+          ) : item.kind === 'file' ? (
+            <>
+              <dt>path</dt>
+              <dd>{item.key}</dd>
+              <dt>lines</dt>
+              <dd>{item.fileInfo?.loc ?? '—'}</dd>
+            </>
+          ) : (
+            symbol && (
+              <>
+                <dt>where</dt>
+                <dd>
+                  {item.file.split('/').pop()}:{symbol.line}–{symbol.endLine}
+                </dd>
+              </>
+            )
+          )}
+          {route && (
+            <>
+              <dt>req/s</dt>
+              <dd>{route.rps.toFixed(route.rps >= 10 ? 0 : 2)}</dd>
+              <dt>errors</dt>
+              <dd>{(errFrac(route.errorRate) * 100).toFixed(2)}%</dd>
+            </>
+          )}
+        </dl>
+        <Issues issues={issuesUnder(tree, node.issues ?? [], chainOf(item))} />
+      </DetailShell>
+    )
+  }
+
+  return (
+    <DetailShell
+      title={node.label}
+      sub={`${node.role} · ${node.status}`}
+      label="Selected server"
+      onClose={onClose}
+    >
+      <dl>
+        {tree?.role.title && (
+          <>
+            <dt>runs</dt>
+            <dd title={tree.role.title}>{tree.role.title}</dd>
+          </>
+        )}
+        <dt>private</dt>
+        <dd>{node.privateIp}</dd>
+        <dt>public</dt>
+        <dd>{node.publicIp}</dd>
+        {node.status === 'running' && (
+          <>
+            <dt>cpu</dt>
+            <dd>{Math.round(node.cpu * 100)}%</dd>
+            <dt>memory</dt>
+            <dd>{fmtMem(node.memUsed, node.memTotal)}</dd>
+          </>
+        )}
+      </dl>
+      <Issues issues={node.issues ?? []} />
+      {onDestroy && (
+        <button type="button" className="fleet-detail-destroy" onClick={onDestroy}>
+          destroy server
+        </button>
+      )}
+    </DetailShell>
+  )
+}
+
+function LinkDetail({
+  link,
+  nodes,
+  onClose,
+}: {
+  link: FleetLink
+  nodes: FleetNode[]
+  onClose: () => void
+}) {
+  const name = (id: string) => nodes.find((node) => node.id === id)?.label ?? id
+  return (
+    <DetailShell
+      title={`${link.protocol} :${link.port}`}
+      sub={`${name(link.source)} → ${name(link.target)}`}
+      label="Selected connection"
+      onClose={onClose}
+    >
+      <dl>
+        <dt>connections</dt>
+        <dd>{link.conns}</dd>
+        <dt>forward</dt>
+        <dd>{fmtRate(link.bytesPerSec)}</dd>
+        <dt>reverse</dt>
+        <dd>{fmtRate(link.bytesPerSecReverse)}</dd>
+      </dl>
+    </DetailShell>
   )
 }

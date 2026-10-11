@@ -8,8 +8,15 @@ import {
   makeTopology,
   makeVulnSeed,
 } from './mockData'
-import type { Agent, AgentsResponse } from '../graph/types'
 import type {
+  Agent,
+  AgentEvent,
+  AgentsResponse,
+  ReasoningLine,
+  ReasoningResponse,
+} from '../graph/types'
+import type {
+  ActivityLine,
   FeedSource,
   LogEntry,
   LogsResponse,
@@ -21,6 +28,33 @@ import type {
 } from './types'
 
 const MAX_LOGS = 200
+const MAX_ACTIVITY = 60
+
+// Ari's own narration and agent events arrive by both WebSocket and polling,
+// so lines are merged by identity and kept in time order.
+function mergeActivity(
+  previous: ActivityLine[],
+  incoming: ActivityLine[],
+): ActivityLine[] {
+  if (!incoming.length) return previous
+  const seen = new Set(previous.map((line) => `${line.ts}|${line.text}`))
+  const fresh = incoming.filter((line) => !seen.has(`${line.ts}|${line.text}`))
+  if (!fresh.length) return previous
+  return [...previous, ...fresh].sort((a, b) => a.ts - b.ts).slice(-MAX_ACTIVITY)
+}
+const fromReasoning = (lines: ReasoningLine[] | undefined): ActivityLine[] =>
+  (lines ?? []).map((line) => ({
+    ts: timestamp(line.ts),
+    source: 'ari',
+    text: line.text,
+  }))
+const fromEvents = (events: AgentEvent[] | undefined): ActivityLine[] =>
+  (events ?? []).map((event) => ({
+    ts: timestamp(event.ts),
+    source: 'agent',
+    text: event.text,
+    severity: event.severity ?? event.finding?.severity,
+  }))
 
 // The service sends ISO dates; the UI keeps timestamps in milliseconds.
 function timestamp(value: unknown): number {
@@ -44,6 +78,7 @@ export interface TelemetryState {
   topology: Topology | null
   vulns: Vuln[]
   agents: Agent[]
+  activity: ActivityLine[]
   source: FeedSource
 }
 
@@ -54,6 +89,7 @@ export function useTelemetry(): TelemetryState {
     topology: null,
     vulns: [],
     agents: [],
+    activity: [],
     source: 'connecting',
   })
 
@@ -100,7 +136,20 @@ export function useTelemetry(): TelemetryState {
           const message = JSON.parse(event.data as string) as WsMessage
           if (message.type === 'agents') {
             const agents = message.data.agents ?? []
-            setState((previous) => ({ ...previous, agents }))
+            const events = fromEvents(message.data.events)
+            setState((previous) => ({
+              ...previous,
+              agents,
+              activity: mergeActivity(previous.activity, events),
+            }))
+            return
+          }
+          if (message.type === 'reasoning') {
+            const lines = fromReasoning([message.data])
+            setState((previous) => ({
+              ...previous,
+              activity: mergeActivity(previous.activity, lines),
+            }))
             return
           }
           if (message.type !== 'metrics' && message.type !== 'log') return
@@ -137,12 +186,14 @@ export function useTelemetry(): TelemetryState {
       if (cancelled || polling) return
       polling = true
       try {
-        const [metrics, logs, topology, findings, swarm] = await Promise.all([
+        const [metrics, logs, topology, findings, swarm, reasoning] =
+          await Promise.all([
           request<Metrics>(API.metrics),
           request<LogsResponse>(API.logs(MAX_LOGS)),
           request<Topology>(API.topology),
           request<VulnsResponse>(API.vulns),
           request<AgentsResponse>(API.agents),
+          request<ReasoningResponse>(API.reasoning(20)),
         ])
         if (cancelled) return
         if (metrics) {
@@ -166,6 +217,10 @@ export function useTelemetry(): TelemetryState {
                 ? []
                 : previous.vulns,
             agents: swarm?.agents ?? previous.agents,
+            activity: mergeActivity(wasDemo ? [] : previous.activity, [
+              ...fromReasoning(reasoning?.lines),
+              ...fromEvents(swarm?.events),
+            ]),
             source:
               socket?.readyState === WebSocket.OPEN &&
               Date.now() - lastFrame < 5000
@@ -192,6 +247,7 @@ export function useTelemetry(): TelemetryState {
               topology: makeTopology(),
               vulns: makeVulnSeed(),
               agents: [],
+              activity: [],
               source: 'mock',
             })
           } else {

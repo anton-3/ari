@@ -1,5 +1,5 @@
 // Shapes mirror the telemetry service API exactly.
-import type { AgentsResponse } from '../graph/types'
+import type { AgentsResponse, ReasoningLine } from '../graph/types'
 
 export interface SeriesPoint {
   t: number
@@ -31,6 +31,14 @@ export interface LogEntry {
   path: string
   status: number
   msg: string
+}
+
+// A line of Ari's own activity: its narration, or an agent event.
+export interface ActivityLine {
+  ts: number
+  source: 'ari' | 'agent'
+  text: string
+  severity?: string
 }
 
 export interface LogsResponse {
@@ -80,6 +88,7 @@ export type WsMessage =
   | { type: 'metrics'; data: Metrics }
   | { type: 'log'; data: LogEntry }
   | { type: 'agents'; data: AgentsResponse }
+  | { type: 'reasoning'; data: ReasoningLine }
 
 // Connection state surfaced to the UI.
 export type FeedSource = 'live' | 'polling' | 'mock' | 'connecting' | 'offline'

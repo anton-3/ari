@@ -82,10 +82,6 @@ export function FindingsPanel({
       </div>
       <div className="finding-stats">
         <div>
-          <strong>{projects.length}</strong>
-          <span>projects watched</span>
-        </div>
-        <div>
           <strong>{open.length}</strong>
           <span>open</span>
         </div>
