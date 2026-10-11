@@ -10,7 +10,7 @@ import { MediaTransport, RelayTransport, warmGreeting, greetingIsReady } from '.
 
 const config = {
   stack: 'custom', host: 'example.test', twilioSid: 'ACtest', twilioToken: 'test-token',
-  deepgramKey: 'fake-secret', model: 'nova-3', language: 'en-US', endpointing: 300, utteranceEnd: 1000,
+  sttUrl: 'wss://stt.test/v1/listen', deepgramKey: 'fake-secret', model: 'parakeet-tdt-0.6b-v2', language: 'en-US', endpointing: 300, utteranceEnd: 1000,
   kokoroUrl: 'https://kokoro.test', kokoroKey: 'fake-secret', voice: 'af_heart', speed: 1,
   ttsProvider: 'ElevenLabs', ttsVoice: 'Eric',
 };
@@ -32,12 +32,16 @@ test('configuration permits existing mode without custom keys, rejects incomplet
   assert.throws(() => voiceConfig({}, false), /PUBLIC_HOST/);
   assert.throws(() => voiceConfig({ ARI_VOICE_STACK: 'other' }, false));
   assert.throws(() => voiceConfig({ ARI_VOICE_STACK: 'custom' }, false), /PUBLIC_HOST/);
-  const env = { ARI_VOICE_STACK: 'custom', PUBLIC_HOST: 'example.test', TWILIO_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'token', DEEPGRAM_API: 'key', KOKORO_TTS_BASE_URL: 'https://kokoro.test', KOKORO_TTS_API_KEY: 'key' };
-  assert.equal(voiceConfig(env, false).model, 'nova-3');
+  const env = { ARI_VOICE_STACK: 'custom', PUBLIC_HOST: 'example.test', TWILIO_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'token', STT_URL: 'wss://stt.test/v1/listen', STT_API_KEY: 'key', KOKORO_TTS_BASE_URL: 'https://kokoro.test', KOKORO_TTS_API_KEY: 'key' };
+  assert.equal(voiceConfig(env, false).sttUrl, 'wss://stt.test/v1/listen');
   const { ARI_VOICE_STACK, ...defaultEnv } = env;
   assert.equal(voiceConfig(defaultEnv, false).stack, 'custom');
-  assert.throws(() => voiceConfig({ ...env, DEEPGRAM_MODEL: 'flux-general-en' }, false), /Flux/);
-  assert.throws(() => voiceConfig({ ...env, DEEPGRAM_UTTERANCE_END_MS: '300' }, false));
+  // Custom is the self-hosted STT + Kokoro; a Deepgram key alone no longer satisfies it.
+  const { STT_URL, STT_API_KEY, ...noStt } = env;
+  assert.throws(() => voiceConfig({ ...noStt, DEEPGRAM_API: 'key' }, false), /STT_URL/);
+  assert.throws(() => voiceConfig({ ...env, STT_URL: 'ws://stt.test/v1/listen' }, false), /WSS/);
+  assert.equal(voiceConfig({ ...env, STT_URL: 'ws://127.0.0.1:8001/v1/listen' }, false).stack, 'custom');
+  assert.throws(() => voiceConfig({ ...env, STT_ENDPOINTING_MS: '10' }, false));
 });
 test('TwiML escapes greeting, carries opaque session only, and fallback changes greeting', () => {
   const s = session({ greeting: 'Hello <friend> & "you"', prompt: 'private incident context' });

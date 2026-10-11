@@ -1,6 +1,6 @@
 # Call or text Ari
 
-**Calls:** `ARI_VOICE_STACK=twilio` uses Twilio ConversationRelay with Deepgram Nova-3 transcription and ElevenLabs speech. `ARI_VOICE_STACK=custom` uses Twilio Media Streams, direct Deepgram Nova-3 transcription and the Kokoro service. Both share Ari's Qwen conversation and tool engine. The model currently returns a complete reply before speech starts; custom mode then streams the audio.
+**Calls:** `ARI_VOICE_STACK=twilio` uses Twilio ConversationRelay with Deepgram Nova-3 transcription and ElevenLabs speech. `ARI_VOICE_STACK=custom` uses Twilio Media Streams with the two models on the voice-model node: self-hosted Parakeet transcription (`voice-stt/`) and the Kokoro service. Both share Ari's Qwen conversation and tool engine. The model currently returns a complete reply before speech starts; custom mode then streams the audio.
 
 **Texts:** Twilio posts each incoming SMS to `/sms`. The server replies with Qwen's answer and keeps a short per-number history in memory.
 
@@ -46,7 +46,8 @@ Note: the Linode account is capped at 10 total instances; "spin up 10" needs a l
 
 ## Select the call stack
 
-The default is `ARI_VOICE_STACK=custom`, using direct Deepgram and Kokoro.
+The default is `ARI_VOICE_STACK=custom`, using the self-hosted STT and Kokoro.
+`ARI_VOICE_STACK=twilio` leaves both transcription and speech to Twilio.
 Leave the variable unset or set it explicitly in your private `.env`:
 
 ```bash
@@ -55,7 +56,7 @@ ARI_VOICE_STACK=custom npm start
 ```
 
 Custom mode requires `PUBLIC_HOST`, `TWILIO_SID`, `TWILIO_AUTH_TOKEN`,
-`DEEPGRAM_API`, `KOKORO_TTS_BASE_URL`, and `KOKORO_TTS_API_KEY`, plus `ffmpeg`
+`STT_URL`, `STT_API_KEY`, `KOKORO_TTS_BASE_URL`, and `KOKORO_TTS_API_KEY`, plus `ffmpeg`
 on PATH. It uses the existing authenticated Kokoro `/v1/audio/speech/stream`
 API (24 kHz mono PCM). Keep the phone number's webhook at `/voice`.
 The same selection applies to inbound calls, `npm run call`, and incident calls.
@@ -65,23 +66,23 @@ mode just because the environment changes.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ARI_VOICE_STACK` | `custom` | `twilio` or `custom` |
-| `DEEPGRAM_API` | required for custom | Direct streaming STT credential |
-| `DEEPGRAM_MODEL` | `nova-3` | Nova v1 streaming model; Flux is not supported |
-| `DEEPGRAM_LANGUAGE` | `en-US` | Transcription language |
-| `DEEPGRAM_ENDPOINTING_MS` | `300` | Silence endpoint, 50–2000 ms |
-| `DEEPGRAM_UTTERANCE_END_MS` | `1000` | Backup endpoint, 1000–5000 ms |
+| `STT_URL` | required for custom | Self-hosted STT `/v1/listen` WebSocket; WSS, or WS on localhost |
+| `STT_API_KEY` | required for custom | Self-hosted STT credential |
+| `STT_ENDPOINTING_MS` | `300` | Silence endpoint, 50–2000 ms |
 | `KOKORO_TTS_VOICE` | `af_heart` | Voice supported by your Kokoro service |
 | `KOKORO_TTS_SPEED` | `1.0` | Speech speed, 0.5–2.0 |
 | `TTS_PROVIDER` / `TTS_VOICE` | ElevenLabs / Eric | ConversationRelay voice, including fallback |
 
-Twilio supplies 8 kHz mu-law audio directly to Deepgram. Kokoro's 24 kHz PCM is
-converted by FFmpeg to 8 kHz mu-law and sent in paced 20 ms frames. Deepgram keeps
-listening while Ari talks. A speech-start event cancels interruptible generation
-and clears Twilio's playback queue. Playback marks retain only fully acknowledged
+Twilio supplies 8 kHz mu-law audio directly to the STT server (Parakeet-TDT 0.6B v2,
+English only), which speaks Deepgram's streaming protocol; install it with
+`voice-stt/setup.sh`. Kokoro's 24 kHz PCM is
+converted by FFmpeg to 8 kHz mu-law and sent in paced 20 ms frames. The STT keeps
+listening while Ari talks. The first recognised words cancel interruptible generation
+and clear Twilio's playback queue. Playback marks retain only fully acknowledged
 segments; the exact words heard within an interrupted segment are unavailable.
 
 One call can use Kokoro at a time **per backend process**. Additional calls use
-ConversationRelay. Deepgram/Kokoro failure redirects the same call to
+ConversationRelay. STT/Kokoro failure redirects the same call to
 ConversationRelay, preserving session context and completed tool results. A
 started tool is allowed to finish, and is never automatically retried. The voice
 changes to the configured ConversationRelay voice after fallback.
@@ -108,7 +109,7 @@ npm run voice:smoke
 
 Tests use mocked providers/tools and real local HTTP/WebSockets and FFmpeg.
 `voice:smoke` spends a small amount of inference credit: it generates synthetic
-telephone speech through Kokoro, transcribes it with your actual Deepgram key,
+telephone speech through Kokoro, transcribes it with the self-hosted STT,
 runs Qwen, and synthesizes replies. It does **not** place a phone call or execute
 infrastructure tools. Synthetic speech is not a substitute for phone-call testing.
 
