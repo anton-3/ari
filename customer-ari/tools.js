@@ -16,6 +16,7 @@ export const ACTION_TOOLS = new Set([
   "dispute_charge",
   "resolve_alert",
   "send_money",
+  "move_money",
   "buy_crypto",
 ]);
 
@@ -224,6 +225,23 @@ export const tools = [
           note: { type: "string", description: "Optional memo." },
         },
         required: ["to", "amount"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "move_money",
+      description:
+        "Move money between the customer's OWN accounts: checking, savings, or paying down their credit card (e.g. 'pay off my credit card from savings', 'move $500 to savings'). Omit amount to pay the full credit card balance. CONFIRM first.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "checking or savings" },
+          to: { type: "string", description: "checking, savings, or credit (credit card)" },
+          amount: { type: "number", description: "Dollars. Omit when paying off the whole credit card balance." },
+        },
+        required: ["from", "to"],
       },
     },
   },
@@ -484,6 +502,14 @@ export async function runTool(name, args, token) {
         if (!(cents > 0)) return "I need a positive amount to send.";
         const r = await apiPost("/api/transfers", { to: args.to, amount_cents: cents, note: args.note || "" }, token);
         return `Sent ${usd(cents / 100)} to ${args.to} from ${r.from_account || "checking"}. New balance: ${usd((r.balance_cents_after ?? 0) / 100)}.`;
+      }
+      case "move_money": {
+        const kind = (v) => (/credit|card/i.test(v) ? "credit" : /sav/i.test(v) ? "savings" : /check/i.test(v) ? "checking" : v);
+        const body = { from: kind(args.from), to: kind(args.to) };
+        if (Number(args.amount) > 0) body.amount_cents = Math.round(Number(args.amount) * 100);
+        const r = await apiPost("/api/transfers/internal", body, token);
+        const bal = (r.balances_after || []).map((a) => `${a.name} ${usd(a.balance_cents / 100)}`).join(", ");
+        return `Moved ${usd(r.amount_cents / 100)} from ${r.from} to ${r.to}. Balances now: ${bal}.`;
       }
       case "get_crypto_prices": {
         const { prices = [], source, as_of } = await apiGet("/api/crypto/prices", token);

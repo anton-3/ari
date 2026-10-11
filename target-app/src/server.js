@@ -632,6 +632,28 @@ app.post('/api/transfers', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /api/transfers/internal { from, to, amount_cents? } -> move money between the user's own accounts.
+// from/to are account kinds (checking | savings | credit) or account ids. Paying a credit card with no
+// amount pays the full balance owed.
+app.post('/api/transfers/internal', requireAuth, async (req, res, next) => {
+  try {
+    const accounts = await db.all('SELECT * FROM accounts WHERE user_id = ? ORDER BY id', [req.user.id]);
+    const find = (v) => accounts.find((a) => String(a.id) === String(v)) || accounts.find((a) => a.kind === String(v || '').toLowerCase());
+    const from = find(req.body?.from), to = find(req.body?.to);
+    if (!from || !to || from.id === to.id) return res.status(400).json({ error: 'from and to must be two different accounts (checking, savings, credit)' });
+    if (from.kind === 'credit') return res.status(400).json({ error: "can't move money out of a credit card" });
+    let amount_cents = Math.round(Number(req.body?.amount_cents));
+    if (!(amount_cents > 0) && to.kind === 'credit') amount_cents = Math.max(0, -num(to.balance_cents));
+    if (!(amount_cents > 0)) return res.status(400).json({ error: 'amount_cents must be positive' });
+    if (num(from.balance_cents) < amount_cents) return res.status(400).json({ error: 'insufficient funds', available_cents: num(from.balance_cents) });
+    await db.run('UPDATE accounts SET balance_cents = balance_cents - ? WHERE id = ?', [amount_cents, from.id]);
+    await db.run('UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?', [amount_cents, to.id]);
+    const after = await db.all('SELECT id, name, kind, balance_cents FROM accounts WHERE id IN (?, ?)', [from.id, to.id]);
+    res.json({ ok: true, amount_cents, from: from.name, to: to.name,
+      balances_after: after.map((a) => ({ ...a, balance_cents: num(a.balance_cents) })) });
+  } catch (err) { next(err); }
+});
+
 // GET /api/trades -> recent trades for the user
 app.get('/api/trades', requireAuth, async (req, res, next) => {
   try {
