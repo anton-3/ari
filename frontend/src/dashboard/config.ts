@@ -1,7 +1,12 @@
 // Single source of truth for the telemetry service location.
 // The telemetry service (built separately) serves the REST + WS API described
 // in ./types.ts on this origin, with CORS enabled.
-export const TELEMETRY_BASE_URL = 'http://localhost:8090'
+export const TELEMETRY_BASE_URL = (
+  import.meta.env.VITE_TELEMETRY_URL || 'http://localhost:8090'
+).replace(/\/$/, '')
+
+// Public contact numbers only; never expose backend credentials through Vite.
+export const ARI_PHONE = import.meta.env.VITE_ARI_PHONE || ''
 
 // Derived endpoints — keep all URL construction here.
 export const API = {

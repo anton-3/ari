@@ -38,14 +38,7 @@ export interface LogsResponse {
 
 export type NodeStatus = 'healthy' | 'degraded' | 'down' | string
 export type NodeType =
-  | 'internet'
-  | 'edge'
-  | 'waf'
-  | 'lb'
-  | 'app'
-  | 'db'
-  | 'cache'
-  | string
+  'internet' | 'edge' | 'waf' | 'lb' | 'app' | 'db' | 'cache' | string
 
 export interface TopoNode {
   id: string
@@ -83,8 +76,7 @@ export interface VulnsResponse {
 
 // WebSocket envelope.
 export type WsMessage =
-  | { type: 'metrics'; data: Metrics }
-  | { type: 'log'; data: LogEntry }
+  { type: 'metrics'; data: Metrics } | { type: 'log'; data: LogEntry }
 
 // Connection state surfaced to the UI.
-export type FeedSource = 'live' | 'polling' | 'mock' | 'connecting'
+export type FeedSource = 'live' | 'polling' | 'mock' | 'connecting' | 'offline'
