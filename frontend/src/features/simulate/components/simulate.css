@@ -1,4 +1,8 @@
 .demo {
+  /* Its own screen: the call to action sits centered below the nav, apart from the chart above. */
+  display: flex;
+  align-items: center;
+  min-height: calc(100vh - var(--nav-h));
   padding: 112px 0;
   border-top: 1px solid var(--line);
   text-align: center;
