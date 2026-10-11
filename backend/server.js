@@ -237,6 +237,7 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
       clearTimeout(setupTimer);
       if (session?.transport?.ws === ws) {
         session.disconnect();
+        store.release(session);
         log(session, "disconnected", { stack: "twilio" });
       }
     });

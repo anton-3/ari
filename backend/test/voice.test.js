@@ -91,6 +91,28 @@ test('session reservations enforce one custom call, token binding and expiration
   assert.equal(store.slot, null);
   store.close();
 });
+test('disconnect releases the active-call flag immediately while retaining history for reconnect', () => {
+  const store = new SessionStore((data) => session(data));
+  try {
+    const call = store.create({ callSid: 'CAended' }, false);
+    assert.equal(store.bind(call.token, call.callSid, 'twilio'), call);
+    attach(call);
+    call.messages.push({ role: 'user', content: 'Keep the conversation history' });
+    assert.equal(call.bound, true);
+    call.disconnect();
+    store.sweep();
+    assert.equal(call.bound, false);
+    assert.equal(call.alive, true);
+    assert.equal(store.sessions.get(call.token), call);
+    assert.equal(call.messages[0].content, 'Keep the conversation history');
+    assert.equal(store.bind(call.token, call.callSid, 'twilio'), call);
+    attach(call);
+    assert.equal(call.bound, true);
+    store.remove(call);
+    assert.equal(call.bound, false);
+    assert.equal(call.alive, false);
+  } finally { store.close(); }
+});
 test('interruption does not repeat an in-flight tool and cancels undispatched tools', async () => {
   let resolveTool, toolStarted;
   const begun = new Promise((r) => { toolStarted = r; });

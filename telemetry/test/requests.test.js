@@ -35,7 +35,7 @@ test('stale and missing observations are explicit, while an empty observed windo
   assert.equal(parseRequest({ id: 'bad', line: 'not a request' }), null);
 });
 function fleet(ssh = async () => ({ code: 0, stdout: 'reloaded', stderr: '' })) {
-  const f = new Fleet({ log: () => {}, ssh, stateFile: path.join(mkdtempSync(path.join(tmpdir(), 'fleet-test-')), 'state.json') });
+  const f = new Fleet({ log: () => {}, ssh, activationWait: async () => {}, stateFile: path.join(mkdtempSync(path.join(tmpdir(), 'fleet-test-')), 'state.json') });
   f.enabled = true;
   for (const [id, role, label] of [['1', 'lb', 'load-balancer-01'], ['2', 'app', 'web-01'], ['3', 'app', 'web-03'], ['4', 'traffic', 'traffic-01']]) {
     f.instances.set(id, { id, role, label, publicIp: `172.232.1.${id}`, privateIp: `192.168.130.${id}`, inst: { status: 'running', tags: ['ari-net', `role:${role}`] } });
@@ -86,4 +86,30 @@ test('failed activation never leaves a node in the upstream pool', async () => {
   assert.equal(op.status, 'failed');
   assert.equal(f.servingState('3'), 'failed');
   assert.equal(f.snapshot().links.some(l => l.target === '3'), false);
+});
+
+test('activation shows a disconnected node for the ten-second warmup before joining traffic', async () => {
+  const f = fleet();
+  let release, requestedWait;
+  f.activationWait = ms => {
+    requestedWait = ms;
+    return new Promise(resolve => { release = resolve; });
+  };
+  const operation = f.activateStandby('slow-loading');
+  for (let i = 0; i < 20 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(operation.durationMs, 10000);
+  assert.ok(requestedWait > 0 && requestedWait <= 10000);
+  assert.equal(operation.progress, 0);
+  assert.equal(operation.status, 'health-checking');
+  assert.equal(f.servingState('3'), 'activating');
+  await f.syncUpstream(); // Periodic synchronization must not connect it early.
+  assert.equal(f.upstreamIds.includes('3'), false);
+  assert.ok(f.snapshot().nodes.some(n => n.id === '3'));
+  assert.ok(!f.snapshot().links.some(l => l.source === '3' || l.target === '3'));
+  assert.equal(f.activateStandby('slow-loading'), operation);
+  release();
+  for (let i = 0; i < 20 && operation.status !== 'ready'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(operation.status, 'ready');
+  assert.equal(f.upstreamIds.includes('3'), true);
+  assert.ok(f.snapshot().links.some(l => l.target === '3'));
 });

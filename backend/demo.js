@@ -83,13 +83,21 @@ export async function prepareNextTake(nodes) {
   console.log('web-03 is warm; the future PR patch passed nginx validation. No PR has been published.');
 }
 
+export function verifyStandby(status, nodes) {
+  const standby = status.standby;
+  if (standby?.status !== 'running' || standby.servingState !== 'standby'
+      || standby.inUpstream !== false || nodes.some(n => n.id === standby.id || n.label === 'web-03')) {
+    throw new Error('web-03 must be healthy, hidden from the fleet map, and outside the serving pool');
+  }
+}
+
 export async function preflight(nodes) {
   const status = await api('/api/demo/status');
   const errors = [];
   if (status.metrics.stale) errors.push('request feed is stale');
   if (!(status.metrics.requestsLast180s >= 90 && status.metrics.requestsLast180s <= 600)) errors.push('need a clean 3-minute baseline (90–600 requests)');
   if (status.incident.active || status.incident.blockedIps.length) errors.push('reset the previous incident/blocklist');
-  if (status.standby?.status !== 'running' || status.standby.servingState !== 'standby') errors.push('web-03 must be healthy and on standby');
+  try { verifyStandby(status, nodes); } catch (e) { errors.push(e.message); }
   let voice;
   try { voice = voiceConfig(); } catch (e) { errors.push(e.message); }
   for (const key of ['TWILIO_SID', 'TWILIO_AUTH_TOKEN', 'PUBLIC_HOST', 'OPENAI_API_KEY']) if (!process.env[key]) errors.push(`${key} is missing`);

@@ -6,7 +6,7 @@ export const TELEMETRY_BASE_URL = (
 ).replace(/\/$/, '')
 
 // Public contact numbers only; never expose backend credentials through Vite.
-export const ARI_PHONE = import.meta.env.VITE_ARI_PHONE || '+19137046751'
+export const ARI_PHONE = import.meta.env.VITE_ARI_PHONE || '+19135578312'
 
 // Derived endpoints — keep all URL construction here.
 export const API = {

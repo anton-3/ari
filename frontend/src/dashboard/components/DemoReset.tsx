@@ -5,6 +5,8 @@ import type { FeedSource } from '../types'
 type ResetState = {
   status: 'idle' | 'running' | 'done' | 'failed'
   error?: string
+  startedAt?: number
+  completedAt?: number
   steps: { id: string; label: string; status: 'pending' | 'running' | 'done' | 'failed'; detail?: string }[]
 }
 const LABELS: Record<FeedSource, string> = {
@@ -17,6 +19,8 @@ export function DemoReset({ source }: { source: FeedSource }) {
   const [sending, setSending] = useState(false)
   const [showResult, setShowResult] = useState(false)
   const [error, setError] = useState('')
+  const [pollError, setPollError] = useState('')
+  const posting = useRef(false)
   const dialog = useRef<HTMLDialogElement>(null)
   const request = useRef(0)
   useEffect(() => {
@@ -27,17 +31,21 @@ export function DemoReset({ source }: { source: FeedSource }) {
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
+      if (posting.current) {
+        timer = setTimeout(poll, 1000)
+        return
+      }
       const sequence = ++request.current
       try {
         const response = await fetch(endpoint, { signal: AbortSignal.timeout(5000) })
         if (!response.ok) throw new Error('Reset service is unavailable. Checking again…')
         const next = await response.json() as ResetState
         if (!stopped && sequence === request.current) {
-          setState(next); setError('')
+          setState(next); setPollError('')
           if (next.status === 'running') setShowResult(true)
         }
       } catch (e) {
-        if (!stopped && open && sequence === request.current) setError(e instanceof Error ? e.message : 'Cannot check reset progress')
+        if (!stopped && open && sequence === request.current) setPollError(e instanceof Error ? e.message : 'Cannot check reset progress')
       } finally {
         if (!stopped) timer = setTimeout(poll, 1000)
       }
@@ -46,19 +54,20 @@ export function DemoReset({ source }: { source: FeedSource }) {
     return () => { stopped = true; clearTimeout(timer) }
   }, [open])
   async function confirm() {
-    setSending(true); setShowResult(true); setError(''); ++request.current
+    posting.current = true
+    setSending(true); setShowResult(false); setState({ status: 'idle', steps: [] }); setError(''); ++request.current
     try {
       const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) })
       const next = await response.json()
       if (!response.ok) throw new Error(next.error || 'Reset could not start')
-      ++request.current; setState(next)
+      ++request.current; setState(next); setShowResult(true)
     } catch (e) { setError(e instanceof Error ? e.message : 'Reset could not start') }
-    finally { setSending(false) }
+    finally { posting.current = false; setSending(false) }
   }
   const running = sending || state.status === 'running'
   const showProgress = showResult || state.status === 'running' || state.status === 'failed'
   return <>
-    <button className="feed-status reset-trigger" title="Reset to pre-demo state" onClick={() => { setShowResult(state.status === 'running' || state.status === 'failed'); setOpen(true) }}>
+    <button className="feed-status reset-trigger" title="Reset to pre-demo state" onClick={() => { setError(''); setPollError(''); setShowResult(state.status === 'running' || state.status === 'failed'); setOpen(true) }}>
       <i className={`status-square ${source}`} />{LABELS[source]}
       {state.status === 'running' && <span className="reset-spinner" aria-label="Reset running" />}
     </button>
@@ -73,9 +82,10 @@ export function DemoReset({ source }: { source: FeedSource }) {
         </li>)}
       </ol>}
       <div aria-live="polite" role="status">
-        {showProgress && state.status === 'done' && <p className="reset-success">Ready for another demo.</p>}
+        {showProgress && state.status === 'done' && <p className="reset-success">Reset completed{state.completedAt ? ` at ${new Date(state.completedAt).toLocaleTimeString()}` : ''}. Pre-demo state verified.</p>}
         {state.status === 'failed' && <p className="reset-error">{state.error} Cleanup is paused; confirm to retry safely.</p>}
-        {error && <p className="reset-error">{error}</p>}
+        {error && <p className="reset-error" role="alert">{error}</p>}
+        {pollError && <p className="reset-error">{pollError}</p>}
         {running && <p className="dialog-note">Reset continues even if you close this window or refresh the dashboard.</p>}
       </div>
       <div className="reset-buttons">

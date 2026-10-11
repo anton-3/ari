@@ -165,7 +165,7 @@ export default function Dashboard() {
         <div className="dashboard-header-left">
           <div className="dashboard-brand">
             <a href="/" aria-label="Ari home">
-              <img src="/favicon.svg" width={24} height={24} alt="" />
+              <img src="/favicon.svg" width={30} height={30} alt="" />
               <span>Ari</span>
             </a>
             <ProjectSwitcher />

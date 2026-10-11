@@ -489,14 +489,14 @@ export default function Look() {
           {logLines.length === 0 && (
             <div className="pcb-log-line is-head">
               <span className="pcb-log-ts">[{hhmmss(now)}]</span>
-              <span className="pcb-log-src">ari&gt;</span>
+              <span className="pcb-log-src">Ari&gt;</span>
               <span className="pcb-log-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span>
             </div>
           )}
           {logLines.map((l, i) => (
             <div className={`pcb-log-line ${i === logLines.length - 1 ? 'is-head' : ''} ${l.err ? 'is-err' : ''}`} key={`${l.ts}-${i}`}>
               <span className="pcb-log-ts">[{hhmmss(l.ts)}]</span>
-              <span className="pcb-log-src">{l.src}&gt;</span>
+              <span className="pcb-log-src">{l.src === 'ari' ? 'Ari' : l.src}&gt;</span>
               <span className="pcb-log-msg" title={l.text}>{l.text}</span>
             </div>
           ))}

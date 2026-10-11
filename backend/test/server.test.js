@@ -66,6 +66,10 @@ test('existing mode requires no custom providers and relay submits final prompts
   ws.send(JSON.stringify({ type: 'prompt', voicePrompt: 'Hello', last: true }));
   assert.equal(JSON.parse((await reply)[0]).type, 'text');
   ws.close(); await once(ws, 'close');
+  await until(() => s.transport === null);
+  assert.equal(s.bound, false);
+  assert.equal(s.alive, true); // Conversation remains retained for reconnect.
+  assert.equal([...r.store.sessions.values()].some(s => s.alive && s.bound), false);
 });
 test('custom stream binds once; fallback preserves completed tool results and frees slot', async (t) => {
   const r = await setup(t);

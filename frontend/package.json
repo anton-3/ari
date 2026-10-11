@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "d3-force": "3.0.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.2.1"

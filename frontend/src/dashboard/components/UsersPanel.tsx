@@ -41,7 +41,7 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
           {last === undefined ? '—' : Math.round(last).toLocaleString('en-US')}
         </strong>
         <span>
-          {metrics?.stale ? 'measurement unavailable' : `${Math.round(rate).toLocaleString('en-US')} requests/min now`}
+          {metrics?.stale ? 'measurement unavailable' : `${Math.round(rate).toLocaleString('en-US')} req/min now`}
         </span>
       </div>
       <div
@@ -83,7 +83,6 @@ export function UsersPanel({ metrics }: { metrics: Metrics | null }) {
             </span>
           ))}
         </div>
-        <div className="chart-unit">requests/min · 5s rate</div>
         <div className="chart-times">
           <span>3m ago</span>
           <span>2m</span>

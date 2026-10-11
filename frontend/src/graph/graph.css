@@ -190,7 +190,7 @@ body { overflow: hidden; }
 
 .iso-map .iso-log-src {
   color: var(--iso-acc);
-  text-transform: lowercase;
+  text-transform: none;
 }
 
 .iso-map .iso-log-msg {

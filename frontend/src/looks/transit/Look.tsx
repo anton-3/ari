@@ -488,14 +488,14 @@ export default function Look() {
           {logLines.length === 0 && (
             <div className="tr-board-row is-head">
               <span className="tr-board-ts">{hhmm(now)}</span>
-              <span className="tr-board-src">ari</span>
+              <span className="tr-board-src">Ari</span>
               <span className="tr-board-msg">{feedUp ? 'fleet feed linked' : 'waiting for telemetry at :8090…'}</span>
             </div>
           )}
           {logLines.map((l, i) => (
             <div className={`tr-board-row ${i === logLines.length - 1 ? 'is-head' : ''} ${l.err ? 'is-err' : ''}`} key={`${l.ts}-${i}`}>
               <span className="tr-board-ts">{hhmm(l.ts)}</span>
-              <span className="tr-board-src">{l.src}</span>
+              <span className="tr-board-src">{l.src === 'ari' ? 'Ari' : l.src}</span>
               <span className="tr-board-msg" title={l.text}>{l.text}</span>
             </div>
           ))}

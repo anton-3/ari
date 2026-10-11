@@ -14,7 +14,7 @@ function setup(overrides={}) {
   api:async(route,body)=>{
    events.push(route);
    if(route==='/api/fleet')return {nodes:[{role:'traffic'}]};
-   if(route==='/api/demo/status')return {incident:{active:false,blockedIps:[]},standby:{servingState:'standby'},metrics:{stale:false,requestsLast180s:180},cooldownRemainingMs:cool};
+   if(route==='/api/demo/status')return {incident:{active:false,blockedIps:[]},standby:{id:'standby',status:'running',servingState:'standby',inUpstream:false},metrics:{stale:false,requestsLast180s:180},cooldownRemainingMs:cool};
    if(route==='/api/demo/maintenance')events.push(`maintenance:${body.resetting}`);
    return {ok:true};
   },
@@ -97,4 +97,24 @@ test('failed final readiness never releases maintenance or claims the next demo 
  reset.start();await reset.promise;
  assert.equal(reset.state.status,'failed');assert.equal(reset.state.steps.find(s=>s.id==='verify').status,'failed');
  assert.ok(!events.includes('maintenance:false'));fs.rmSync(dir,{recursive:true});
+});
+
+test('reset refuses success when standby is still visible or still in the serving pool', async () => {
+ for (const mode of ['visible', 'upstream']) {
+  const { reset, events, dir } = setup({
+   api: async (route) => {
+    if (route === '/api/fleet') return {nodes: mode === 'visible' ? [{id:'standby',label:'web-03'}] : []};
+    if (route === '/api/demo/status') return {
+     incident:{active:false,blockedIps:[]},
+     standby:{id:'standby',status:'running',servingState:'standby',inUpstream:mode==='upstream'},
+    };
+    return {ok:true};
+   },
+  });
+  reset.start(); await reset.promise;
+  assert.equal(reset.state.status, 'failed');
+  assert.match(reset.state.error, /hidden.*serving pool/);
+  assert.ok(!events.includes('verify'));
+  fs.rmSync(dir,{recursive:true});
+ }
 });

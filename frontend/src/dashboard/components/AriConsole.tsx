@@ -1,8 +1,8 @@
-import { ARI_PHONE } from '../config'
+import { AriContact } from './AriContact'
 import type { ActivityLine, FeedSource, LogEntry } from '../types'
 import { useEffect, useRef, useState } from 'react'
 
-const MAX_LINES = 5
+const MAX_LINES = 4
 const NOTABLE = new Set(['warn', 'error', 'critical'])
 
 interface Line {
@@ -10,7 +10,6 @@ interface Line {
   ts: number
   source: string
   text: string
-  detail: string
   tone: 'ari' | 'alert' | 'plain'
 }
 
@@ -31,7 +30,6 @@ function fromLog(log: LogEntry): Line {
     ts: log.ts,
     source: log.source,
     text: log.msg,
-    detail: [log.level, log.status, log.ip].filter(Boolean).join(' · '),
     tone: NOTABLE.has(log.level) ? 'alert' : 'plain',
   }
 }
@@ -57,7 +55,6 @@ export function AriConsole({
         ts: line.ts,
         source: line.source,
         text: line.text,
-        detail: line.severity ?? '',
         tone: 'ari',
       }),
     ),
@@ -90,7 +87,7 @@ export function AriConsole({
   const newestAri = lines.filter(line => line.tone === 'ari').sort((a, b) => b.ts - a.ts)[0]
   const latestTs = Math.max(0, ...lines.map(line => line.ts))
   const pinned = newestAri && latestTs - newestAri.ts < 15000 && !displayed.some(line => line.key === newestAri.key)
-  const rows = pinned ? [...displayed.slice(-4), newestAri] : displayed
+  const rows = pinned ? [...displayed.slice(-(MAX_LINES - 1)), newestAri] : displayed
   const feeding = source === 'live' || source === 'polling'
 
   return (
@@ -103,7 +100,7 @@ export function AriConsole({
         <i
           className={`status-square ${source === 'offline' ? 'offline' : ''}`}
         />
-        ari activity
+        Ari activity
       </span>
       <div className="ari-events" aria-live="off">
         {rows.length === 0 && (
@@ -117,11 +114,8 @@ export function AriConsole({
               key={line.key}
               style={{ opacity: head ? 1 : 0.4 + (0.45 * (i + 1)) / rows.length }}
             >
-              <time className="mono" dateTime={new Date(line.ts).toISOString()}>
-                {new Date(line.ts).toLocaleTimeString('en-GB')}
-              </time>
-              <span className="event-source" title={line.source}>
-                {line.source}
+              <span className="event-source" title={line.source.replace(/\bari\b/gi, 'Ari')}>
+                {line.source.replace(/\bari\b/gi, 'Ari')}
               </span>
               <span className="event-message">
                 <span className="ell" title={line.text}>
@@ -129,19 +123,11 @@ export function AriConsole({
                 </span>
                 {head && feeding && <Equalizer />}
               </span>
-              <span className="event-detail mono">{line.detail}</span>
             </div>
           )
         })}
       </div>
-      <div className="ari-contact">
-        <span>text or call</span>
-        {ARI_PHONE ? (
-          <a href={`tel:${ARI_PHONE}`}>{ARI_PHONE}</a>
-        ) : (
-          <span className="contact-unset">number not configured</span>
-        )}
-      </div>
+      <AriContact />
     </section>
   )
 }

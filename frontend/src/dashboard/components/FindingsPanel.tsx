@@ -60,7 +60,6 @@ export function FindingsPanel({
   onViewAll: () => void
   onSelect: (finding: Vuln) => void
 }) {
-  const projects = [...new Set(findings.map((finding) => finding.project))]
   const open = findings.filter((finding) => finding.status !== 'remediated')
   const fixed = findings.length - open.length
   const counts = SEVERITIES.map(
@@ -109,28 +108,18 @@ export function FindingsPanel({
           )}
         </div>
         <div className="severity-legend">
-          {SEVERITIES.map((severity, i) => (
-            <span key={severity}>
-              <i style={{ background: SEVERITY_COLORS[severity] }} />
-              {counts[i]} {severity}
-            </span>
-          ))}
+          {SEVERITIES.map(
+            (severity, i) =>
+              counts[i] > 0 && (
+                <span key={severity}>
+                  <i style={{ background: SEVERITY_COLORS[severity] }} />
+                  {counts[i]} {severity}
+                </span>
+              ),
+          )}
         </div>
       </div>
       <FindingRows findings={findings} onSelect={onSelect} />
-      <div className="scan-status">
-        <div>
-          <span className="ell">
-            watching <span className="mono">{projects.join(', ') || '—'}</span>
-          </span>
-          <span>{findings.length} findings</span>
-        </div>
-        <div
-          className="scan-track"
-          title="Scan progress unavailable"
-          aria-hidden="true"
-        />
-      </div>
     </section>
   )
 }
