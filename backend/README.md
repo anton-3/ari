@@ -1,15 +1,15 @@
-# Call or text Claude
+# Call or text Ari
 
-**Calls:** Twilio ConversationRelay turns the caller's speech into text and sends it over a WebSocket to `server.js`. The server streams Claude's reply back, and Twilio speaks it to the caller.
+**Calls:** `ARI_VOICE_STACK=twilio` uses Twilio ConversationRelay with Deepgram Nova-3 transcription and ElevenLabs speech. `ARI_VOICE_STACK=custom` uses Twilio Media Streams, direct Deepgram Nova-3 transcription and the Kokoro service. Both share Ari's Qwen conversation and tool engine. The model currently returns a complete reply before speech starts; custom mode then streams the audio.
 
-**Texts:** Twilio posts each incoming SMS to `/sms`. The server replies with Claude's answer and keeps a short per-number history in memory.
+**Texts:** Twilio posts each incoming SMS to `/sms`. The server replies with Qwen's answer and keeps a short per-number history in memory.
 
 Both webhooks check Twilio's request signature, so `TWILIO_AUTH_TOKEN` must be set.
 
 ## Setup
 
-1. `cd backend && npm install`
-2. `cp .env.example .env` and set `OPENAI_API_KEY`, `TWILIO_SID` and `TWILIO_AUTH_TOKEN`. The npm scripts load `backend/.env` first and fall back to the repo-root `.env` for anything it doesn't set.
+1. Use Node 22.19+ (Node 24 recommended), then `cd backend && npm install`
+2. `cp .env.example .env` and set `OPENAI_API_KEY`, `TWILIO_SID` and `TWILIO_AUTH_TOKEN`. The npm scripts load the repo-root `.env`, then `backend/.env`, whose values override the root file. Shell variables override both. Blank entries in `backend/.env` also override root values: remove unused blank entries when inheriting credentials.
 3. `npm start`, which listens on port 8080.
 4. Expose it publicly, for example with `brew install cloudflared && cloudflared tunnel --url http://localhost:8080`. Put the hostname it prints (without `https://`) in `.env` as `PUBLIC_HOST`, then restart.
 5. In the Twilio Console, open Phone Numbers → your number → Voice Configuration. Set "A call comes in" to **Webhook**, `https://<PUBLIC_HOST>/voice`, **HTTP POST**. Set "A message comes in" to `https://<PUBLIC_HOST>/sms`, **HTTP POST**.
@@ -35,10 +35,92 @@ Extra env vars (see `.env.example`): `LINODE_API_TOKEN`, `TWILIO_NUMBER` (calls)
 On a call, Ari can now use these tools (see `linode.js` and `actions.js`):
 - Instances: `list_instances`, `provision_instances` (spin up new nodes; sensible defaults, honors size/region if asked), `shutdown_instance`, `boot_instance`.
 - Live data: `get_live_metrics`, `report_vulnerability` — these talk to the telemetry service (`TELEMETRY_URL`, default http://localhost:8090); findings posted this way appear on the dashboard live.
-- Security actions (demo-safe stubs): `rollback_commit`, `rotate_secret`, `block_ips`, `close_ports`.
+- Live fleet actions: `get_incident`, `block_ips`, `scale_web_app`, `open_rate_limit_pr`. These can change real infrastructure or create a PR.
+- Demo stubs: `rollback_commit`, `rotate_secret`, `close_ports`.
 
 `npm run cleanup-nodes` deletes every instance Ari provisioned (tag `ari-provisioned`); the target app is left alone.
 
 Scenarios beyond the DDoS drill live in `scenarios/` — run `node --env-file-if-exists=../.env --env-file-if-exists=.env scenarios/run-scenario.js <key> +1NUMBER` (keys: ddos, sqli-commit, exposed-secret, brute-force, port-scan; prefix `DRY_RUN=1` to preview without calling).
 
 Note: the Linode account is capped at 10 total instances; "spin up 10" needs a limit increase from Linode support. Ari reports partial success gracefully.
+
+## Select the call stack
+
+The default is `ARI_VOICE_STACK=custom`, using direct Deepgram and Kokoro.
+Leave the variable unset or set it explicitly in your private `.env`:
+
+```bash
+cd backend
+ARI_VOICE_STACK=custom npm start
+```
+
+Custom mode requires `PUBLIC_HOST`, `TWILIO_SID`, `TWILIO_AUTH_TOKEN`,
+`DEEPGRAM_API`, `KOKORO_TTS_BASE_URL`, and `KOKORO_TTS_API_KEY`, plus `ffmpeg`
+on PATH. It uses the existing authenticated Kokoro `/v1/audio/speech/stream`
+API (24 kHz mono PCM). Keep the phone number's webhook at `/voice`.
+The same selection applies to inbound calls, `npm run call`, and incident calls.
+Restart the backend after changing configuration. Existing calls do not change
+mode just because the environment changes.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ARI_VOICE_STACK` | `custom` | `twilio` or `custom` |
+| `DEEPGRAM_API` | required for custom | Direct streaming STT credential |
+| `DEEPGRAM_MODEL` | `nova-3` | Nova v1 streaming model; Flux is not supported |
+| `DEEPGRAM_LANGUAGE` | `en-US` | Transcription language |
+| `DEEPGRAM_ENDPOINTING_MS` | `300` | Silence endpoint, 50–2000 ms |
+| `DEEPGRAM_UTTERANCE_END_MS` | `1000` | Backup endpoint, 1000–5000 ms |
+| `KOKORO_TTS_VOICE` | `af_heart` | Voice supported by your Kokoro service |
+| `KOKORO_TTS_SPEED` | `1.0` | Speech speed, 0.5–2.0 |
+| `TTS_PROVIDER` / `TTS_VOICE` | ElevenLabs / Eric | ConversationRelay voice, including fallback |
+
+Twilio supplies 8 kHz mu-law audio directly to Deepgram. Kokoro's 24 kHz PCM is
+converted by FFmpeg to 8 kHz mu-law and sent in paced 20 ms frames. Deepgram keeps
+listening while Ari talks. A speech-start event cancels interruptible generation
+and clears Twilio's playback queue. Playback marks retain only fully acknowledged
+segments; the exact words heard within an interrupted segment are unavailable.
+
+One call can use Kokoro at a time **per backend process**. Additional calls use
+ConversationRelay. Deepgram/Kokoro failure redirects the same call to
+ConversationRelay, preserving session context and completed tool results. A
+started tool is allowed to finish, and is never automatically retried. The voice
+changes to the configured ConversationRelay voice after fallback.
+Reservations expire after 30 seconds; disconnected session state is retained for
+five minutes. Sessions are in memory and do not survive a backend restart. Run
+one backend process; multi-replica capacity coordination is not implemented.
+
+The standard greeting is cached in memory after successful synthesis. Provider
+connections use IPv4 to avoid the observed five-second dual-stack DNS delay on
+this device. Custom mode uses five-second STT connection timeout, two seconds maximum startup
+input buffering, and three-second TTS first-audio, stall and playback-acknowledgement
+timeouts. Provider failure triggers fallback instead of silently dropping audio.
+HTTP and WebSocket endpoints validate Twilio signatures; `PUBLIC_HOST` must match
+the external HTTPS hostname even when the backend is behind a tunnel. Keep
+ConversationRelay enabled in Twilio for overflow and fallback.
+
+## Validate the stack
+
+```bash
+cd backend
+npm test
+npm run voice:smoke
+```
+
+Tests use mocked providers/tools and real local HTTP/WebSockets and FFmpeg.
+`voice:smoke` spends a small amount of inference credit: it generates synthetic
+telephone speech through Kokoro, transcribes it with your actual Deepgram key,
+runs Qwen, and synthesizes replies. It does **not** place a phone call or execute
+infrastructure tools. Synthetic speech is not a substitute for phone-call testing.
+
+Structured `voice` logs include the Call SID, route, model identity, model/tool
+latency, first audio, playback completion and fallback reasons. They exclude API
+keys, raw audio and spoken text. Existing tool results stay in session memory.
+
+For live acceptance, compare at least 30 matched turns in each mode with real
+phone audio: names/IPs, pauses, interruptions, incident approval with non-mutating
+questions, an overflow call, and injected provider failure. Capture caller-side
+latency independently. Backend targets are p95 first audio within 1.5 seconds of
+available reply text and `clear` sent within 100 ms of a speech-start event.
+End-of-speech latency additionally includes STT, Qwen and any tool execution.
+No latency parity or simultaneous-Kokoro-call guarantee is implied by a passing
+synthetic smoke test. Roll back with `ARI_VOICE_STACK=twilio` and restart.
