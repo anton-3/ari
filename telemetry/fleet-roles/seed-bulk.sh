@@ -10,7 +10,7 @@
 #    MAX_DISK_PCT   stop if the data filesystem exceeds this %% used (default 80)
 #    BATCH          transactions per COPY batch (default 10000000)
 #    NUSERS NMERCH  how many users / merchants to ensure (default 1e6 / 2000)
-#    PGDB           database (default acmepay)
+#    PGDB           database (default myfiat)
 #
 #  Strategy: ensure users+merchants, DROP the transaction indexes (incl PK),
 #  COPY batches until the size target or the disk guard, then rebuild indexes
@@ -29,7 +29,7 @@ BATCH=${BATCH:-10000000}   # rows per COPY stream per wave
 PAR=${PAR:-4}              # parallel COPY streams per wave
 NUSERS=${NUSERS:-1000000}
 NMERCH=${NMERCH:-2000}
-PGDB=${PGDB:-acmepay}
+PGDB=${PGDB:-myfiat}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GEN="$HERE/seed-bulk.py"
 PSQL=(sudo -u postgres psql -d "$PGDB" -v ON_ERROR_STOP=1 -qtA)
