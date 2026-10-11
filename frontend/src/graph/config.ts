@@ -2,7 +2,9 @@
 // The telemetry service (built separately) serves the REST + WS API described in
 // ./types.ts on this origin, with CORS enabled. This mirrors the dashboard's
 // config.ts intentionally so the two pages stay in sync but remain isolated.
-export const TELEMETRY_BASE_URL = 'http://localhost:8090'
+export const TELEMETRY_BASE_URL = (
+  import.meta.env.VITE_TELEMETRY_URL || 'http://localhost:8090'
+).replace(/\/$/, '')
 
 // Derived endpoints — keep all URL construction here.
 export const API = {

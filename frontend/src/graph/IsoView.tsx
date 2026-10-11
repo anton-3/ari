@@ -193,6 +193,8 @@ interface Props {
   live: boolean
   reduced: boolean
   rightInset: number
+  /** camera padding around the scene; defaults leave room for the full-page chrome */
+  insets?: { top: number; right: number; bottom: number; left: number }
   showControl: boolean
   selected: IsoSel | null
   focus: { id: string; n: number } | null
@@ -454,9 +456,13 @@ export default function IsoView(props: Props) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    let W = window.innerWidth
-    let H = window.innerHeight
-    let dpr = 1
+    const host = canvas.parentElement
+    const measure = () => {
+      const r = host?.getBoundingClientRect()
+      return { w: Math.max(1, Math.round(r?.width ?? window.innerWidth)), h: Math.max(1, Math.round(r?.height ?? window.innerHeight)) }
+    }
+    let { w: W, h: H } = measure()
+    let dpr = 0
     const view = { k: 1, tx: W / 2, ty: H / 2 }
     let autoFit = true
     let focusN = -1
@@ -480,9 +486,12 @@ export default function IsoView(props: Props) {
     const agentsR = new Map<string, AgentR>()
 
     const resize = () => {
-      dpr = Math.min(window.devicePixelRatio || 1, 2)
-      W = window.innerWidth
-      H = window.innerHeight
+      const m = measure()
+      const d = Math.min(window.devicePixelRatio || 1, 2)
+      if (m.w === W && m.h === H && d === dpr) return
+      dpr = d
+      W = m.w
+      H = m.h
       canvas.width = Math.floor(W * dpr)
       canvas.height = Math.floor(H * dpr)
       canvas.style.width = `${W}px`
@@ -490,6 +499,8 @@ export default function IsoView(props: Props) {
     }
     resize()
     window.addEventListener('resize', resize)
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize)
+    if (ro && host) ro.observe(host)
 
     const P = (x: number, y: number, z = 0) => ({ x: (x - y) * CX * view.k + view.tx, y: ((x + y) * CY - z) * view.k + view.ty })
     const toGround = (sx: number, sy: number) => {
@@ -974,6 +985,10 @@ export default function IsoView(props: Props) {
       last = now
       const Pp = propsRef.current
       const red = Pp.reduced
+      const padT = Pp.insets?.top ?? TOP_PAD
+      const padB = Pp.insets?.bottom ?? BOTTOM_PAD
+      const padL = Pp.insets?.left ?? LEFT_PAD
+      const padR = Math.max(Pp.insets?.right ?? RIGHT_PAD, Pp.rightInset)
       const pulse = red ? 1 : 0.7 + 0.3 * Math.sin(now / 380)
       const bodies = bodiesRef.current
       const links = linksRef.current
@@ -1091,11 +1106,11 @@ export default function IsoView(props: Props) {
         const b = bodies.get(Pp.focus.id)
         if (b) { autoFit = false; panTo = { x: bx(b), y: by(b) } }
       }
-      const aw = Math.max(200, W - LEFT_PAD - Math.max(RIGHT_PAD, Pp.rightInset))
-      const ah = Math.max(160, H - TOP_PAD - BOTTOM_PAD)
+      const aw = Math.max(200, W - padL - padR)
+      const ah = Math.max(160, H - padT - padB)
       if (panTo) {
-        const cx = LEFT_PAD + aw / 2
-        const cy = TOP_PAD + ah / 2
+        const cx = padL + aw / 2
+        const cy = padT + ah / 2
         const t = ease(6)
         const tx = cx - (panTo.x - panTo.y) * CX * view.k
         const ty = cy - (panTo.x + panTo.y) * CY * view.k
@@ -1121,7 +1136,7 @@ export default function IsoView(props: Props) {
           const sp = spacing(deep.d)
           const kRead = Math.max(44 / sp, kids.length >= 3 ? (lw + 24) / (2 * CX * sp) : 0)
           const kk = clamp(Math.max(kFit, kRead), 0.3, 6)
-          f = { k: kk, tx: LEFT_PAD + aw / 2 - u * kk, ty: TOP_PAD + ah / 2 - (v - 20) * kk }
+          f = { k: kk, tx: padL + aw / 2 - u * kk, ty: padT + ah / 2 - (v - 20) * kk }
         } else if (bodies.size) {
           let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
           for (const b of bodies.values()) {
@@ -1134,7 +1149,7 @@ export default function IsoView(props: Props) {
             y0 = Math.min(y0, v - hv - st.h - 62); y1 = Math.max(y1, v + hv + 20)
           }
           const kk = clamp(Math.min(aw / (x1 - x0), ah / (y1 - y0)), 0.3, 1.5)
-          f = { k: kk, tx: LEFT_PAD + aw / 2 - ((x0 + x1) / 2) * kk, ty: TOP_PAD + ah / 2 - ((y0 + y1) / 2) * kk }
+          f = { k: kk, tx: padL + aw / 2 - ((x0 + x1) / 2) * kk, ty: padT + ah / 2 - ((y0 + y1) / 2) * kk }
         }
         if (f) {
           const t = ease(4)
@@ -1698,7 +1713,7 @@ export default function IsoView(props: Props) {
           if (j.prio < 200 && overlaps(rect, j.b.id)) {
             const fy = j.foot.y + j.foot.r + 8
             const alt = { x0: j.foot.x - w / 2, y0: fy, x1: j.foot.x + w / 2, y1: fy + h }
-            if (overlaps(alt, j.b.id) || alt.y1 > H - BOTTOM_PAD + 10) continue
+            if (overlaps(alt, j.b.id) || alt.y1 > H - padB + 10) continue
             rect = alt
             below = true
           }
@@ -1865,6 +1880,7 @@ export default function IsoView(props: Props) {
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
+      ro?.disconnect()
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
