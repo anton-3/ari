@@ -78,3 +78,7 @@ and agent/call status are not fabricated. The findings footer identifies watched
 projects; navigation opens findings, event, agent, and integration details.
 The local telemetry service itself generates synthetic traffic; its connection
 status means a working feed, not production traffic.
+
+The demo baseline generator sends real requests with per-request noise, short
+bursts and slow random drift around 60 requests/minute. Its cadence leaves
+headroom inside the ±50% limit for five-second request-count buckets.
