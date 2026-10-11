@@ -8,6 +8,7 @@ import {
   makeTopology,
   makeVulnSeed,
 } from './mockData'
+import type { Agent, AgentsResponse } from '../graph/types'
 import type {
   FeedSource,
   LogEntry,
@@ -42,6 +43,7 @@ export interface TelemetryState {
   logs: LogEntry[]
   topology: Topology | null
   vulns: Vuln[]
+  agents: Agent[]
   source: FeedSource
 }
 
@@ -51,6 +53,7 @@ export function useTelemetry(): TelemetryState {
     logs: [],
     topology: null,
     vulns: [],
+    agents: [],
     source: 'connecting',
   })
 
@@ -95,6 +98,11 @@ export function useTelemetry(): TelemetryState {
         if (cancelled) return
         try {
           const message = JSON.parse(event.data as string) as WsMessage
+          if (message.type === 'agents') {
+            const agents = message.data.agents ?? []
+            setState((previous) => ({ ...previous, agents }))
+            return
+          }
           if (message.type !== 'metrics' && message.type !== 'log') return
           lastFrame = Date.now()
           receivedServiceData = true
@@ -129,11 +137,12 @@ export function useTelemetry(): TelemetryState {
       if (cancelled || polling) return
       polling = true
       try {
-        const [metrics, logs, topology, findings] = await Promise.all([
+        const [metrics, logs, topology, findings, swarm] = await Promise.all([
           request<Metrics>(API.metrics),
           request<LogsResponse>(API.logs(MAX_LOGS)),
           request<Topology>(API.topology),
           request<VulnsResponse>(API.vulns),
+          request<AgentsResponse>(API.agents),
         ])
         if (cancelled) return
         if (metrics) {
@@ -156,6 +165,7 @@ export function useTelemetry(): TelemetryState {
               : wasDemo
                 ? []
                 : previous.vulns,
+            agents: swarm?.agents ?? previous.agents,
             source:
               socket?.readyState === WebSocket.OPEN &&
               Date.now() - lastFrame < 5000
@@ -181,6 +191,7 @@ export function useTelemetry(): TelemetryState {
               logs: makeLogSeed().reverse(),
               topology: makeTopology(),
               vulns: makeVulnSeed(),
+              agents: [],
               source: 'mock',
             })
           } else {

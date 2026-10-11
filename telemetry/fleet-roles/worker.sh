@@ -7,7 +7,7 @@ install -m 0755 "$BUNDLE/fleet-roles/worker.py" /opt/ari-net/worker.py
 (umask 077; printf 'DB_HOST=%s\nDB_PASS=%s\n' "$DB_HOST" "$DB_PASS" > /etc/ari-net/worker.env)
 cat > /etc/systemd/system/ari-worker.service <<'UNIT'
 [Unit]
-Description=ari-net AcmePay settlement worker
+Description=ari-net MyFiat settlement worker
 After=network-online.target
 [Service]
 EnvironmentFile=/etc/ari-net/worker.env

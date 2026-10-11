@@ -2,6 +2,7 @@ import { Header } from '@/components/layouts/Header'
 import { Simulate } from '@/features/simulate/components/Simulate'
 import { Hero } from '@/features/hero/components/Hero'
 import { HowItWorks } from '@/features/how-it-works/components/HowItWorks'
+import { LossesChart } from '@/features/losses-chart/components/LossesChart'
 
 export function Landing() {
   return (
@@ -19,6 +20,7 @@ export function Landing() {
         <Header />
         <main>
           <Hero />
+          <LossesChart />
           <HowItWorks />
           <Simulate />
         </main>

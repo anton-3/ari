@@ -1,4 +1,4 @@
-# Deploying AcmePay
+# Deploying MyFiat
 
 > ⚠️ Demo target app with intentional vulnerabilities. Deploy only to an
 > isolated demo environment (e.g. a throwaway Linode VM). Never expose it to the
@@ -22,7 +22,7 @@ To run it under a process manager (survives reboot / crashes):
 
 ```bash
 npm install -g pm2
-pm2 start src/server.js --name acmepay
+pm2 start src/server.js --name myfiat
 pm2 save
 ```
 
@@ -30,14 +30,14 @@ pm2 save
 
 ```bash
 cd target-app
-docker build -t acmepay .
-docker run -d --name acmepay -p 8070:8070 acmepay
+docker build -t myfiat .
+docker run -d --name myfiat -p 8070:8070 myfiat
 ```
 
 - The image installs build tools, `npm install --omit=dev`, and seeds the DB.
 - Override the port with `-e PORT=9000 -p 9000:9000`.
 - Persist the DB across container restarts with a volume:
-  `-v acmepay-data:/app/data`.
+  `-v myfiat-data:/app/data`.
 
 Check it:
 
@@ -50,13 +50,24 @@ curl http://localhost:8070/health
 1. Create a small Linode (Nanode 1GB is enough), Ubuntu 22.04+.
 2. SSH in, install Docker (`curl -fsSL https://get.docker.com | sh`).
 3. Copy this `target-app/` directory to the VM (`scp -r target-app root@<ip>:~/`).
-4. `cd target-app && docker build -t acmepay . && docker run -d -p 8070:8070 --name acmepay acmepay`
+4. `cd target-app && docker build -t myfiat . && docker run -d -p 8070:8070 --name myfiat myfiat`
 5. Open the Linode firewall for TCP 8070 (demo only).
 6. Point Ari's monitor at `http://<linode-ip>:8070`.
 
 ## Stopping
 
 ```bash
-# plain node:  Ctrl-C, or kill the process / pm2 stop acmepay
-# docker:      docker stop acmepay && docker rm acmepay
+# plain node:  Ctrl-C, or kill the process / pm2 stop myfiat
+# docker:      docker stop myfiat && docker rm myfiat
 ```
+
+## Existing installations
+
+The rename changes the service and OS user to `myfiat`, the installation path to
+`/opt/myfiat`, the PostgreSQL database and role to `myfiat`, Redis keys to
+`myfiat:*`, and configuration overrides to `MYFIAT_DB` / `MYFIAT_SAFE_SEARCH`.
+For an existing deployment, back up its database and migrate these names and
+its service configuration before redeploying; simply bootstrapping the newly
+named database creates a separate dataset. Update the seeded administrator
+email to `admin@myfiat.io` when preserving an existing dataset.
+The code rename alone does not change running remote services.

@@ -8,7 +8,7 @@
 // store via an injected local upsert function.
 //
 // Agents prefer to target the files that correspond to the pre-documented
-// AcmePay findings (target-app/SECURITY-NOTES.md) so the demo lands on real
+// MyFiat findings (target-app/SECURITY-NOTES.md) so the demo lands on real
 // issues; otherwise they spread across the scanned repo graph.
 
 import { getRepoGraph } from './repograph.js';
@@ -89,8 +89,8 @@ function targetPool(focus) {
   if (!candidates.length) {
     // no graph at all -> fall back to topology-style node ids
     candidates = [
-      { nodeId: 'app-1', label: 'AcmePay App 1', finding: null },
-      { nodeId: 'app-2', label: 'AcmePay App 2', finding: null },
+      { nodeId: 'app-1', label: 'MyFiat App 1', finding: null },
+      { nodeId: 'app-2', label: 'MyFiat App 2', finding: null },
     ];
   }
   return candidates;
@@ -164,7 +164,7 @@ function emitFinding(agent) {
         id: vulnId,
         severity: f.severity,
         title: f.title,
-        project: 'AcmePay',
+        project: 'MyFiat',
         endpoint: f.endpoint,
         status: agent.type === 'remediator' ? 'remediated' : 'open',
       });

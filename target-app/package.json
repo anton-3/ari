@@ -1,7 +1,7 @@
 {
-  "name": "acmepay",
+  "name": "myfiat",
   "version": "1.2.0",
-  "description": "AcmePay - payments & checkout API (DEMO target app with intentional vulnerabilities)",
+  "description": "MyFiat - payments & checkout API (DEMO target app with intentional vulnerabilities)",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

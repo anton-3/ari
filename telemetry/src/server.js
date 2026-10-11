@@ -11,7 +11,7 @@ import { FleetAgents, fleetStatusLine } from './fleet/agents.js';
 import { scanCodemap, codemapView } from './fleet/codemap.js';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
-// Optional live target: set LIVE_TARGET=http://localhost:8070 to sample AcmePay.
+// Optional live target: set LIVE_TARGET=http://localhost:8070 to sample MyFiat.
 const LIVE_TARGET = process.env.LIVE_TARGET || null;
 
 const sim = new Simulator({ liveTarget: LIVE_TARGET });

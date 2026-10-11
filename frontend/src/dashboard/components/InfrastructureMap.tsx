@@ -1,290 +1,294 @@
+import { useEffect, useRef, useState } from 'react'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReduceMotion'
-import type { Topology, TopoNode } from '../types'
+import ErrorBoundary from '../../graph/ErrorBoundary'
+import IsoView, { C, PROTO_COLOR } from '../../graph/IsoView'
+import type { IsoSel } from '../../graph/IsoView'
+import { itemsOf, treeFor } from '../../graph/codetree'
+import { fmtRate } from '../../graph/helpers'
+import { forgetPos } from '../../graph/positions'
+import { useFleet } from '../../graph/useFleet'
+import type { FleetApi } from '../../graph/useFleet'
+import type { Agent, FleetNode } from '../../graph/types'
+import type { Metrics } from '../types'
 
-interface PlacedNode {
-  node: TopoNode
-  x: number
-  y: number
-}
-const STATUS_COLORS: Record<string, string> = {
-  healthy: 'var(--ok)',
-  degraded: 'var(--warn)',
-  down: 'var(--danger)',
-}
-const STATUS_LABELS: Record<string, string> = {
-  healthy: 'healthy',
-  degraded: 'strained',
-  down: 'critical',
-}
+// The simulator only takes over once the real feed has had this long to answer.
+const SIM_GRACE_MS = 4000
+const INSETS = { top: 20, right: 20, bottom: 20, left: 20 }
+const SYNTHETIC_ROLES = new Set(['controller', 'internet'])
+const LEGEND: [string, string][] = [
+  ['http', PROTO_COLOR.http],
+  ['postgres', PROTO_COLOR.postgres],
+  ['redis', PROTO_COLOR.redis],
+  ['warning', C.amber],
+  ['critical', C.red],
+]
 
-function tier(node: TopoNode): number {
-  if (node.id === 'internet' || node.type === 'internet') return 0
-  if (['firewall', 'waf', 'edge'].includes(node.type)) return 1
-  if (node.type === 'lb') return 2
-  if (['db', 'cache'].includes(node.type)) return 4
-  return 3
-}
-
-function placeNodes(topology: Topology): PlacedNode[] {
-  const columns = [16, 176, 346, 536, 746]
-  return columns.flatMap((x, column) => {
-    const nodes = topology.nodes.filter((node) => tier(node) === column)
-    return nodes.map((node, i) => ({
-      node,
-      x,
-      y:
-        column === 3 && nodes.length === 4
-          ? [184, 324, 64, 444][i]
-          : column === 3 && nodes.length === 2
-            ? 184 + i * 140
-            : column === 4 && nodes.length === 2
-              ? node.type === 'cache'
-                ? 164
-                : 344
-              : nodes.length === 1
-                ? 254
-                : 64 + i * (380 / Math.max(1, nodes.length - 1)),
-    }))
-  })
-}
-
-export function InfrastructureMap({
-  topology,
-  users,
-}: {
-  topology: Topology | null
-  users: number | undefined
-}) {
-  const reducedMotion = usePrefersReducedMotion()
-  const displayed = topology
-  const positions = displayed ? placeNodes(displayed) : []
-  const lookup = new Map(
-    positions.map((position) => [position.node.id, position]),
+function canDelete(node: FleetNode | undefined): node is FleetNode {
+  return (
+    !!node &&
+    node.deletable &&
+    !SYNTHETIC_ROLES.has(node.role) &&
+    node.status !== 'deleting' &&
+    !node.id.startsWith('pending-')
   )
-  const computeCount =
-    displayed?.nodes.filter((node) =>
-      ['app', 'db', 'cache'].includes(node.type),
-    ).length ?? 0
-  const lbCount =
-    displayed?.nodes.filter((node) => node.type === 'lb').length ?? 0
-  const fwCount =
-    displayed?.nodes.filter((node) => ['firewall', 'waf'].includes(node.type))
-      .length ?? 0
+}
+
+interface MapProps {
+  metrics: Metrics | null
+  agents: Agent[]
+}
+
+export function InfrastructureMap({ metrics, agents }: MapProps) {
+  const surge = metrics?.mode === 'surge'
+  const real = useFleet(false, surge)
+  const hasReal = (real.fleet?.nodes.length ?? 0) > 0
+  const [waited, setWaited] = useState(false)
+
+  useEffect(() => {
+    if (hasReal) return
+    const timer = window.setTimeout(() => setWaited(true), SIM_GRACE_MS)
+    return () => window.clearTimeout(timer)
+  }, [hasReal])
+
+  if (hasReal)
+    return (
+      <FleetCard fl={real} agents={agents} metrics={metrics} simulated={false} />
+    )
+  if (waited) return <SimulatedFleet metrics={metrics} surge={surge} />
+  return <FleetCard fl={null} agents={[]} metrics={metrics} simulated={false} />
+}
+
+// Mounted only while there is no real fleet; the real feed keeps probing above.
+function SimulatedFleet({
+  metrics,
+  surge,
+}: {
+  metrics: Metrics | null
+  surge: boolean
+}) {
+  const fl = useFleet(true, surge)
+  return <FleetCard fl={fl} agents={fl.simAgents} metrics={metrics} simulated />
+}
+
+function FleetCard({
+  fl,
+  agents,
+  metrics,
+  simulated,
+}: MapProps & { fl: FleetApi | null; simulated: boolean }) {
+  const reducedMotion = usePrefersReducedMotion()
+  const section = useRef<HTMLElement>(null)
+  const hovered = useRef(false)
+  const [picked, setPicked] = useState<IsoSel | null>(null)
+  const [confirm, setConfirm] = useState<FleetNode | null>(null)
+  const [typed, setTyped] = useState('')
+
+  const fleet = fl?.fleet ?? null
+  const codemap = fl?.codemap ?? null
+  const nodes = fleet?.nodes ?? []
+  const links = fleet?.links ?? []
+  // A selection whose node or link has gone is simply no longer shown.
+  const selected =
+    picked &&
+    (picked.kind === 'node'
+      ? nodes.some((node) => node.id === picked.id)
+      : links.some((link) => link.id === picked.id))
+      ? picked
+      : null
+  const selectedNode =
+    selected?.kind === 'node'
+      ? nodes.find((node) => node.id === selected.id)
+      : undefined
+
+  // Delete/Backspace asks to destroy the selected server; Esc steps out one level.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
+      if (document.querySelector('dialog[open]')) return
+      if (!hovered.current && !section.current?.contains(document.activeElement))
+        return
+      if (event.key === 'Escape') {
+        if (selected?.kind !== 'node') return setPicked(null)
+        const items = itemsOf(
+          treeFor(codemap, selectedNode?.role ?? ''),
+          selected.path ?? [],
+        )
+        if (!items.length) return setPicked(null)
+        // a selected leaf closes the level it sits on; an open item closes itself
+        const drop = items[items.length - 1].children.length ? 1 : 2
+        setPicked({
+          kind: 'node',
+          id: selected.id,
+          path: items
+            .slice(0, Math.max(0, items.length - drop))
+            .map((item) => item.key),
+        })
+      } else if (
+        (event.key === 'Delete' || event.key === 'Backspace') &&
+        canDelete(selectedNode)
+      ) {
+        event.preventDefault()
+        setTyped('')
+        setConfirm(selectedNode)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, selectedNode, codemap])
+
+  async function destroy() {
+    if (!fl || !confirm || typed !== confirm.label) return
+    const node = confirm
+    setConfirm(null)
+    if (await fl.deleteNode(node.id, typed)) {
+      forgetPos(node.label)
+      setPicked(null)
+    }
+  }
+
+  const servers = nodes.filter((node) => !SYNTHETIC_ROLES.has(node.role))
+  const running = servers.filter((node) => node.status === 'running').length
+  const issues = servers.reduce(
+    (sum, node) => sum + (node.issues?.length ?? 0),
+    0,
+  )
+  const throughput = links.reduce(
+    (sum, link) => sum + Math.max(0, link.bytesPerSec),
+    0,
+  )
+  const addable = fl?.roles.filter((role) => role.addable) ?? []
 
   return (
     <section
+      ref={section}
       className="dash-panel infrastructure"
       id="infrastructure"
       aria-labelledby="infrastructure-title"
+      onPointerEnter={() => (hovered.current = true)}
+      onPointerLeave={() => (hovered.current = false)}
     >
       <div className="panel-heading">
-        <h2 id="infrastructure-title">infrastructure</h2>
+        <div className="fleet-heading">
+          <h2 id="infrastructure-title">infrastructure</h2>
+          {fl && fleet && addable.length > 0 && (
+            <div className="fleet-add" aria-label="Add a server">
+              {addable.map((role) => (
+                <button
+                  key={role.role}
+                  type="button"
+                  draggable
+                  title={`${role.description} — click to add, or drag onto the map`}
+                  onClick={() => fl.addNode(role.role)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('text/ari-role', role.role)
+                    event.dataTransfer.effectAllowed = 'copy'
+                  }}
+                >
+                  + {role.label.toLowerCase()}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="health-legend">
-          <span>
-            <i style={{ background: 'var(--ok)' }} />
-            healthy
-          </span>
-          <span>
-            <i style={{ background: 'var(--warn)' }} />
-            strained
-          </span>
-          <span>
-            <i style={{ background: 'var(--danger)' }} />
-            critical
-          </span>
+          {LEGEND.map(([label, color]) => (
+            <span key={label}>
+              <i style={{ background: color }} />
+              {label}
+            </span>
+          ))}
         </div>
       </div>
       <div className="infrastructure-canvas">
-        {displayed ? (
-          <svg
-            viewBox="0 0 880 540"
-            role="img"
-            aria-label="Deployment topology with live node health and animated request and response paths"
-          >
-            <defs>
-              <pattern
-                id="dash-grid"
-                width="20"
-                height="20"
-                patternUnits="userSpaceOnUse"
-              >
-                <rect width="1.5" height="1.5" fill="var(--line)" />
-              </pattern>
-            </defs>
-            <rect
-              width="880"
-              height="540"
-              fill="url(#dash-grid)"
-              opacity="0.7"
+        {fl && fleet ? (
+          <ErrorBoundary>
+            <IsoView
+              fleet={fleet}
+              agents={agents}
+              metrics={metrics}
+              codemap={codemap}
+              live={!simulated}
+              reduced={reducedMotion}
+              rightInset={0}
+              insets={INSETS}
+              showControl={false}
+              selected={selected}
+              focus={null}
+              onSelect={setPicked}
+              onDropRole={(role, x, y) => fl.addNode(role, { x, y })}
             />
-            {[
-              ['internet', 70],
-              ['edge', 315],
-              ['compute', 590],
-              ['data', 800],
-            ].map(([label, x]) => (
-              <text key={label} x={x} y="34" className="map-tier">
-                {label}
-              </text>
-            ))}
-            {displayed.edges.map((edge, i) => {
-              const from = lookup.get(edge.from),
-                to = lookup.get(edge.to)
-              if (!from || !to) return null
-              const startX = from.x + 108,
-                startY = from.y + 26,
-                endY = to.y + 26
-              const mid = (startX + to.x) / 2
-              const path = `M${startX} ${startY} C${mid} ${startY} ${mid} ${endY} ${to.x} ${endY}`
-              const reverse = `M${to.x} ${endY + 3} C${mid} ${endY + 3} ${mid} ${startY + 3} ${startX} ${startY + 3}`
-              return (
-                <g key={`${edge.from}-${edge.to}`}>
-                  <path d={path} className="map-edge" />
-                  {!reducedMotion &&
-                    from.node.status !== 'down' &&
-                    to.node.status !== 'down' && (
-                      <>
-                        {[0, 1, 2].map((offset) => (
-                          <rect
-                            key={offset}
-                            width="3"
-                            height="3"
-                            x="-1.5"
-                            y="-1.5"
-                            fill="var(--fg-2)"
-                          >
-                            <animateMotion
-                              dur={`${1.3 + (i % 3) * 0.4}s`}
-                              begin={`${-offset * 0.5}s`}
-                              path={path}
-                              repeatCount="indefinite"
-                            />
-                          </rect>
-                        ))}
-                        {[0, 1].map((offset) => (
-                          <rect
-                            key={offset}
-                            width="3"
-                            height="3"
-                            x="-1.5"
-                            y="-1.5"
-                            fill="var(--accent)"
-                          >
-                            <animateMotion
-                              dur={`${1.6 + (i % 3) * 0.4}s`}
-                              begin={`${-offset * 0.8}s`}
-                              path={reverse}
-                              repeatCount="indefinite"
-                            />
-                          </rect>
-                        ))}
-                      </>
-                    )}
-                </g>
-              )
-            })}
-            {positions.map(({ node, x, y }) => {
-              const client = tier(node) === 0
-              const color = STATUS_COLORS[node.status] || 'var(--muted)'
-              const status = STATUS_LABELS[node.status] || node.status
-              const label = client
-                ? 'clients'
-                : node.type === 'lb'
-                  ? 'nodebalancer'
-                  : node.type === 'firewall'
-                    ? 'firewall'
-                    : node.type === 'cache'
-                      ? 'redis'
-                      : node.type === 'db'
-                        ? 'postgres'
-                        : node.id.startsWith('app-')
-                          ? node.id.replace('app-', 'web-')
-                          : node.label
-              return (
-                <g key={node.id} className="map-node">
-                  <title>{`${node.label} · ${client ? `${users ?? '—'} active users` : status}`}</title>
-                  <rect
-                    x={x}
-                    y={y}
-                    width="108"
-                    height="52"
-                    fill="var(--dash-surface)"
-                  />
-                  <rect
-                    x={x}
-                    y={y}
-                    width="108"
-                    height="52"
-                    className={client ? 'map-client' : 'map-box'}
-                    style={{ color: client ? 'var(--dim)' : color }}
-                  />
-                  {!client && (
-                    <rect
-                      x={x + 86}
-                      y={y + 10}
-                      width="6"
-                      height="6"
-                      fill={color}
-                    />
-                  )}
-                  <text x={x + 10} y={y + 21} className="map-label">
-                    {label.length > 14 ? `${label.slice(0, 13)}…` : label}
-                  </text>
-                  <text x={x + 10} y={y + 40} className="map-sub">
-                    {client
-                      ? 'live'
-                      : node.type === 'app'
-                        ? 'app'
-                        : node.type === 'lb'
-                          ? node.id
-                          : node.type === 'db'
-                            ? 'primary'
-                            : node.type === 'cache'
-                              ? 'cache'
-                              : 'cloud fw'}
-                  </text>
-                  <text
-                    x={x + 98}
-                    y={y + 40}
-                    className="map-value"
-                    fill={client ? 'var(--fg-2)' : color}
-                  >
-                    {client
-                      ? users === undefined
-                        ? '—'
-                        : new Intl.NumberFormat('en', {
-                            notation: 'compact',
-                            maximumFractionDigits: 1,
-                          }).format(users)
-                      : status}
-                  </text>
-                </g>
-              )
-            })}
-          </svg>
+          </ErrorBoundary>
         ) : (
-          <div className="panel-empty">
-            waiting for infrastructure telemetry…
-          </div>
+          <div className="panel-empty">waiting for fleet telemetry…</div>
         )}
       </div>
       <footer className="infrastructure-footer">
         <span>
-          {displayed
-            ? `${computeCount} nodes · ${lbCount} nodebalancer${lbCount === 1 ? '' : 's'} · ${fwCount} firewall${fwCount === 1 ? '' : 's'}`
+          {fleet
+            ? `${servers.length} server${servers.length === 1 ? '' : 's'} · ${running} running · ${issues} issue${issues === 1 ? '' : 's'} · ${fmtRate(throughput)}`
             : 'connecting to telemetry'}
         </span>
-        <div className="packet-legend">
-          <span>
-            <i />
-            request
-          </span>
-          <span>
-            <i />
-            response
-          </span>
-        </div>
+        <span>
+          {!fleet
+            ? ''
+            : simulated
+              ? 'simulated fleet · no real servers'
+              : 'live fleet'}
+        </span>
       </footer>
+      {confirm && (
+        <dialog
+          ref={(element) => {
+            if (!element || element.open) return
+            element.showModal()
+            element.querySelector('input')?.focus()
+          }}
+          className="dashboard-dialog"
+          onClose={() => setConfirm(null)}
+          aria-labelledby="destroy-title"
+        >
+          <div className="dialog-heading">
+            <h2 id="destroy-title">destroy server</h2>
+            <button
+              className="dialog-close"
+              onClick={() => setConfirm(null)}
+              aria-label="Close dialog"
+            >
+              ×
+            </button>
+          </div>
+          <p className="dialog-note">
+            {simulated
+              ? `This removes ${confirm.label} from the simulated fleet. No real server is touched.`
+              : `This permanently deletes the Linode server ${confirm.label} (${confirm.publicIp}, ${confirm.region}, ${confirm.type}). Its disk and everything on it is destroyed. This cannot be undone.`}
+          </p>
+          <input
+            className="finding-search mono"
+            aria-label={`Type ${confirm.label} to confirm`}
+            placeholder={`type ${confirm.label} to confirm`}
+            autoComplete="off"
+            spellCheck={false}
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void destroy()
+            }}
+          />
+          <div className="fleet-destroy-actions">
+            <button className="text-button" onClick={() => setConfirm(null)}>
+              cancel
+            </button>
+            <button
+              className="fleet-destroy"
+              disabled={typed !== confirm.label}
+              onClick={() => void destroy()}
+            >
+              destroy {confirm.label}
+            </button>
+          </div>
+        </dialog>
+      )}
     </section>
   )
 }

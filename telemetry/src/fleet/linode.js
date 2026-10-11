@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 export const FLEET_TAG = 'ari-net';
 export const REGION = 'us-ord';
 export const TYPE = 'g6-nanode-1';
-// Per-role plan overrides (db holds the large AcmePay dataset).
+// Per-role plan overrides (db holds the large MyFiat dataset).
 export const ROLE_TYPE = { db: 'g6-standard-4' };
 export const typeForRole = (role) => ROLE_TYPE[role] || TYPE;
 export const IMAGE = 'linode/ubuntu24.04';

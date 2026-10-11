@@ -1,4 +1,5 @@
 // Shapes mirror the telemetry service API exactly.
+import type { AgentsResponse } from '../graph/types'
 
 export interface SeriesPoint {
   t: number
@@ -76,7 +77,9 @@ export interface VulnsResponse {
 
 // WebSocket envelope.
 export type WsMessage =
-  { type: 'metrics'; data: Metrics } | { type: 'log'; data: LogEntry }
+  | { type: 'metrics'; data: Metrics }
+  | { type: 'log'; data: LogEntry }
+  | { type: 'agents'; data: AgentsResponse }
 
 // Connection state surfaced to the UI.
 export type FeedSource = 'live' | 'polling' | 'mock' | 'connecting' | 'offline'

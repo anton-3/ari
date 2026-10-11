@@ -32,7 +32,7 @@ function recommend(issue, node) {
     case 'security-updates':
       return `on ${L}: apt-get update && apt-get -y upgrade${/linux-|kernel/.test(issue.detail) ? ' then reboot in a maintenance window' : ''}; enable unattended-upgrades`;
     case 'http-5xx':
-      return `check app node health behind ${L} (journalctl -u acmepay on each app) and remove failing nodes from the upstream`;
+      return `check app node health behind ${L} (journalctl -u myfiat on each app) and remove failing nodes from the upstream`;
     case 'service-down':
       return `on ${L}: systemctl restart the role service and inspect journalctl for the crash (${issue.title})`;
     case 'cpu-high': return `${L} is CPU-bound: add another node of role ${node.role} or reduce load`;
@@ -43,7 +43,7 @@ function recommend(issue, node) {
     case 'unreachable': return `${L} is unreachable over SSH: check the Linode console / Lish and reboot if hung`;
     case 'app-vuln': {
       const fixes = {
-        SQLI: 'use the parameterized branch (ACMEPAY_SAFE_SEARCH=1) and delete the concatenated query',
+        SQLI: 'use the parameterized branch (MYFIAT_SAFE_SEARCH=1) and delete the concatenated query',
         SECRETS: 'move stripeSecretKey/jwtSecret to environment variables and rotate the keys',
         IDOR: 'require a verified session on GET /api/users/:id and only return the caller\'s own record',
         VERBOSE: 'return a generic error + id and log err.stack server-side only',

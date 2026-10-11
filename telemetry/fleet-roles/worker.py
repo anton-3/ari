@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ari-net worker: a small AcmePay settlement/reporting job.
+"""ari-net worker: a small MyFiat settlement/reporting job.
 
 Keeps one Postgres connection open and every few seconds:
   - summarises the ledger by status (reporting query),
@@ -8,7 +8,7 @@ Keeps one Postgres connection open and every few seconds:
 import os, time
 import psycopg2
 
-DSN = "host=%s port=5432 dbname=acmepay user=acmepay password=%s connect_timeout=5" % (
+DSN = "host=%s port=5432 dbname=myfiat user=myfiat password=%s connect_timeout=5" % (
     os.environ["DB_HOST"], os.environ["DB_PASS"])
 
 

@@ -1,10 +1,11 @@
 import { useRef } from 'react'
+import { Underlined } from '@/components/ui/Underlined'
 import { site } from '@/config/site'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReduceMotion'
 import { PhaseList } from '@/features/how-it-works/components/PhaseList'
 import { ReasoningFooter } from '@/features/how-it-works/components/ReasoningFooter'
 import { TopologyMap } from '@/features/how-it-works/components/TopologyMap'
-import { useScrollProgress } from '@/features/how-it-works/hooks/useScrollProgress'
+import { useScrollProgress } from '@/hooks/useScrollProgress'
 import { sceneFor } from '@/features/how-it-works/utils/scenes'
 import { PHASES, STEPS_PER_PHASE } from '@/features/how-it-works/utils/topologyData'
 import './how-it-works.css'
@@ -49,7 +50,7 @@ export function HowItWorks() {
                 Scroll to play ↓
               </span>
             </div>
-            <h2 className="h2 how__title">Watch it reason about your network.</h2>
+            <h2 className="h2 how__title">Watch it <Underlined>reason</Underlined> about your network.</h2>
             <div className="how__grid">
               <PhaseList
                 active={phase}

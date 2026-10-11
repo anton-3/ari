@@ -13,7 +13,9 @@ http://localhost:5173/dashboard.html. The landing page remains at `/`.
 Start the `telemetry/` service on port 8090. The frontend reads:
 
 - `GET /api/metrics`: current active users and their three-minute history.
-- `GET /api/topology`: node health and network connections.
+- `GET /api/fleet`, `/api/fleet/codemap`, `/api/fleet/roles`, `/api/alerts`:
+  the isometric infrastructure map (servers, links, code tree, addable roles).
+- `GET /api/agents`: check jobs drawn on the map.
 - `GET /api/vulns`: findings, projects, status, and severity counts.
 - `GET /api/logs`: recent activity and warning/error events.
 - `WS /ws`: metric and log updates.
@@ -34,6 +36,21 @@ VITE_ARI_PHONE=+15551234567
 Only the public phone number goes in Vite configuration; backend credentials
 must stay in the backend environment. A remote HTTPS deployment needs an HTTPS
 telemetry endpoint with WebSocket support.
+
+## Infrastructure map
+
+The infrastructure card renders the isometric fleet map from `src/graph`
+(`IsoView`, fed by `useFleet`), the same scene as `/graph.html`: pan, wheel zoom,
+double-click to refit, click a server to open its files and symbols, Esc to step
+out, drag servers on the grid. The buttons in the card heading add a server
+(click, or drag onto the map); Delete on a selected server opens a
+type-the-label confirmation before destroying it. Against a live fleet these
+create and delete real Linode servers.
+
+The fleet API is localhost-only. When it has no servers or cannot be reached,
+the card shows the built-in simulated fleet after a four-second grace period and
+says so in its footer; it switches back as soon as real servers appear. Server
+positions are shared with `/graph.html` through `localStorage`.
 
 ## Reference values without an API source
 

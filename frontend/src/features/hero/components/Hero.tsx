@@ -34,7 +34,9 @@ export function Hero() {
           Ari does blank.
         </p>
         <div className="hero__actions">
-          <ButtonLink onClick={() => scrollToSection(site.sections.howPanel, 'center')}>See how it works</ButtonLink>
+          <ButtonLink turn onClick={() => scrollToSection(site.sections.howPanel, 'center')}>
+            See how it works
+          </ButtonLink>
         </div>
       </div>
     </section>

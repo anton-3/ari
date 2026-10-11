@@ -14,6 +14,7 @@ export const API = {
   logs: (limit = 100) => `${TELEMETRY_BASE_URL}/api/logs?limit=${limit}`,
   topology: `${TELEMETRY_BASE_URL}/api/topology`,
   vulns: `${TELEMETRY_BASE_URL}/api/vulns`,
+  agents: `${TELEMETRY_BASE_URL}/api/agents`,
 }
 
 export const WS_URL = `${TELEMETRY_BASE_URL.replace(/^http/, 'ws')}/ws`

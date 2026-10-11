@@ -14,7 +14,7 @@ export const INCIDENT_GREETING =
 export const incidentPrompt = ({ label = "ari-net-lb-1" } = {}) =>
   `This is a live incident call you are initiating. You have just detected a sharp, abnormal spike in traffic ` +
   `against our own load balancer (${label}) — a distributed denial-of-service pattern: a flood of requests from ` +
-  `a small set of source IP addresses, well above baseline. The web app behind it is AcmePay, our banking app.\n` +
+  `a small set of source IP addresses, well above baseline. The web app behind it is MyFiat, our banking app.\n` +
   `Run the incident like a calm senior on-call engineer. Steps:\n` +
   `1. Open by telling them what you're seeing: it looks like a distributed denial-of-service attack against our ` +
   `infrastructure. Keep it to a sentence or two. Then ASK for permission to ban the attacking IP addresses.\n` +

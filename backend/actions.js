@@ -143,7 +143,7 @@ export const tools = [
     function: {
       name: "scale_web_app",
       description:
-        "Add another node to serve the web app (AcmePay), e.g. to absorb a traffic surge. It boots on our cloud and joins the load balancer automatically.",
+        "Add another node to serve the web app (MyFiat), e.g. to absorb a traffic surge. It boots on our cloud and joins the load balancer automatically.",
       parameters: {
         type: "object",
         properties: {

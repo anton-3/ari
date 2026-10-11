@@ -23,8 +23,8 @@ NG
 # ari-net incident response — managed by the fleet controller. Do not edit by hand.
 include /etc/nginx/ari-net-blocklist.conf;
 NG
-cat > /etc/nginx/sites-available/acmepay <<'NG'
-upstream acmepay {
+cat > /etc/nginx/sites-available/myfiat <<'NG'
+upstream myfiat {
   include /etc/nginx/ari-net-upstream.conf;
   keepalive 32;
 }
@@ -36,7 +36,7 @@ server {
   location = /nginx-health { return 200 "ok\n"; }
   location / {
         # ari:rate-limit-apply
-    proxy_pass http://acmepay;
+    proxy_pass http://myfiat;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_set_header Host $host;
@@ -48,7 +48,7 @@ server {
 }
 NG
 rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/acmepay /etc/nginx/sites-enabled/acmepay
+ln -sf /etc/nginx/sites-available/myfiat /etc/nginx/sites-enabled/myfiat
 # (Ubuntu's stock logrotate rule for /var/log/nginx/*.log rotates ari-access.log daily.)
 nginx -t
 systemctl enable --now nginx >/dev/null 2>&1

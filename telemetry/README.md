@@ -9,7 +9,7 @@ API over HTTP + WebSocket that the dashboard UI and Ari's backend both read.
   network attack traffic anywhere**. (The separate **ari-net fleet** below is real
   infrastructure with real, modest demo traffic between our own servers.)
 - **Optional live mode:** set `LIVE_TARGET=http://localhost:8070` to make *benign* HTTP GETs to the
-  AcmePay target app to sample real-ish latency. It never floods (one GET every 5s).
+  MyFiat target app to sample real-ish latency. It never floods (one GET every 5s).
 
 ## Run
 
@@ -17,7 +17,7 @@ API over HTTP + WebSocket that the dashboard UI and Ari's backend both read.
 cd telemetry
 npm install
 npm start                 # http://localhost:8090  (synthetic mode)
-# optional live sampling of AcmePay:
+# optional live sampling of MyFiat:
 LIVE_TARGET=http://localhost:8070 npm start
 ```
 
@@ -89,7 +89,7 @@ POST /api/agents/deploy   body { count, type?, focus? }
 -> { ok: true, agents: [<new agent>, ...] }
    // spawns `count` (1..50) simulated agents. type optional (one of the 4 types,
    // else mixed). focus optional substring to bias target selection by path/label.
-   // Agents prefer files tied to documented AcmePay findings, else spread across
+   // Agents prefer files tied to documented MyFiat findings, else spread across
    // the graph. SIMULATION ONLY — no real scanning or network activity.
 
 POST /api/agents/recall
@@ -112,7 +112,7 @@ CORS is enabled (permissive) so the dashboard can call from any origin.
 
 - In-memory rolling state: ~5 min of metrics at 1s resolution (300 points), ~500 log entries,
   a seeded topology (internet -> WAF/edge -> load balancer -> 2 app nodes -> Postgres + Redis),
-  and 3-5 seeded example vulnerabilities (mixed severities/statuses) referencing AcmePay.
+  and 3-5 seeded example vulnerabilities (mixed severities/statuses) referencing MyFiat.
 - No API keys or secrets required.
 
 ### Agent swarm (simulation)
@@ -127,7 +127,7 @@ prefixed `AGT-VULN-`) via the local upsert, so they also appear in `GET /api/vul
 
 ## ari-net fleet (REAL infrastructure)
 
-`src/fleet/` runs a **real** fleet of Linode nanodes serving AcmePay, maps it live
+`src/fleet/` runs a **real** fleet of Linode nanodes serving MyFiat, maps it live
 (real TCP byte counters), and lets the UI add or delete nodes, which **creates or
 destroys real Linode servers**. Enabled automatically when `LINODE_API_TOKEN` is set
 (env, or read from `backend/.env`) and `~/.ssh/id_ed25519(.pub)` exists.
@@ -135,7 +135,7 @@ destroys real Linode servers**. Enabled automatically when `LINODE_API_TOKEN` is
 ### Topology / roles
 
 ```
-traffic ──http:80──▶ lb (nginx) ──http-app:3000──▶ app-1..N (AcmePay)
+traffic ──http:80──▶ lb (nginx) ──http-app:3000──▶ app-1..N (MyFiat)
                                                      ├─postgres:5432──▶ db (PostgreSQL)
                                                      └─redis:6379─────▶ cache (Redis)
 worker ──postgres:5432──▶ db
@@ -145,9 +145,9 @@ controller (this Mac) ┄┄control:22┄┄▶ every node      internet ──�
 | role | what runs | notes |
 |------|-----------|-------|
 | `lb` | nginx :80, upstream = every ready app node's private IP:3000 | singleton; the controller rewrites `/etc/nginx/ari-net-upstream.conf` over SSH and reloads whenever app nodes come or go (plus a 20s resync) |
-| `app` | AcmePay on :3000 (Node 20, systemd `acmepay`) | `DATABASE_URL` -> db, `REDIS_URL` -> cache (optional); joins the lb when ready |
+| `app` | MyFiat on :3000 (Node 20, systemd `myfiat`) | `DATABASE_URL` -> db, `REDIS_URL` -> cache (optional); joins the lb when ready |
 | `db` | PostgreSQL 16 on localhost + private IP | singleton; `pg_hba` allows 192.168.128.0/17 with a password generated on the node (`/etc/ari-net/db.pass`) |
-| `cache` | Redis on localhost + private IP, `requirepass` | AcmePay counts requests per route (`HINCRBY acmepay:hits`) and caches `GET /api/merchants` for 5s |
+| `cache` | Redis on localhost + private IP, `requirepass` | MyFiat counts requests per route (`HINCRBY myfiat:hits`) and caches `GET /api/merchants` for 5s |
 | `traffic` | `fleet-roles/traffic.py` (systemd `ari-traffic`) | keep-alive request mix (merchants, transaction search, logins incl. some bad passwords, payments, user lookups, health, ~4% 404s). `normal` ≈ 3 req/s, `surge` ≈ 40 req/s, read from `/etc/ari-net/traffic.mode` |
 | `worker` | `fleet-roles/worker.py` (systemd `ari-worker`) | one persistent Postgres connection; ledger summary every 3s, settles one old `pending` txn every ~9s |
 
@@ -182,10 +182,10 @@ Every sample also reads each app/worker node's configured `DB_HOST` / `REDIS_HOS
 - **cache**: apps use the oldest ready, running cache node. If an app points at a cache
   that is gone or not listening on :6379, or at none while one exists, the controller
   patches `REDIS_HOST`/`REDIS_PASS` in `/etc/ari-net/env`, re-uploads the current app code
-  and runs `fleet-roles/app-rewire.sh` (rewrite `app.env`, restart **only** `acmepay`,
+  and runs `fleet-roles/app-rewire.sh` (rewrite `app.env`, restart **only** `myfiat`,
   wait for `/health`). Apps are rolled **one at a time**, and the roll stops if a node
   fails its health check, so the lb always keeps healthy upstreams. With no cache at all,
-  apps run without Redis (`REDIS_URL` unset); AcmePay's cache is optional and fails fast
+  apps run without Redis (`REDIS_URL` unset); MyFiat's cache is optional and fails fast
   (no offline queue, 250ms read timeout), so a dead Redis never blocks a request.
 - **db**: never auto-created or replaced. Apps and the worker are re-pointed only if a db
   node exists at a different address and the configured one is not listening on :5432.
@@ -201,7 +201,7 @@ Limits: at most **8** ari-net instances; `lb` and `db` are singletons.
 
 ### Large demo dataset (db node) + db resize
 
-The AcmePay `db` node holds a large, realistic dataset so the bank looks real.
+The MyFiat `db` node holds a large, realistic dataset so the bank looks real.
 Because that needs CPU/RAM/disk beyond a nanode, the `db` role default plan is
 `g6-standard-6` (`ROLE_TYPE` in `src/fleet/linode.js`); the original node was
 resized in place with the Linode resize API
@@ -311,7 +311,7 @@ it stops holding.
 | `ssh-bruteforce` | medium | >20 failed SSH logins in 10 min (`journalctl -u ssh`), top source IPs in `detail` | 60s |
 | `security-updates` | low (medium if kernel/openssh) | `apt list --upgradable` filtered to `-security` | 10 min |
 | `dependency-missing` | high | app's configured cache (`:6379`) or db (`:5432`) is not a running fleet node listening on that port | 2s |
-| `app-vuln` | per SECURITY-NOTES | static read of the **deployed** AcmePay files on app nodes (`/opt/acmepay`): concatenated SQL, hard-coded secrets, unauthenticated `/api/users/:id`, `err.stack` in responses, MD5 password column. No requests are sent. | 10 min |
+| `app-vuln` | per SECURITY-NOTES | static read of the **deployed** MyFiat files on app nodes (`/opt/myfiat`): concatenated SQL, hard-coded secrets, unauthenticated `/api/users/:id`, `err.stack` in responses, MD5 password column. No requests are sent. | 10 min |
 
 #### Code map
 

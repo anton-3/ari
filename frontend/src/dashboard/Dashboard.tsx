@@ -19,7 +19,7 @@ const FEED_LABELS: Record<FeedSource, string> = {
 }
 
 export default function Dashboard() {
-  const { metrics, logs, topology, vulns, source } = useTelemetry()
+  const { metrics, logs, vulns, agents, source } = useTelemetry()
   const [now, setNow] = useState(() => Date.now())
   const [view, setView] = useState<View | null>(null)
   const [selected, setSelected] = useState<Vuln | null>(null)
@@ -27,7 +27,7 @@ export default function Dashboard() {
   const dialog = useRef<HTMLDialogElement>(null)
   const currentFinding =
     vulns.find((finding) => finding.id === selected?.id) ?? selected
-  const project = vulns[0]?.project ?? 'AcmePay'
+  const project = vulns[0]?.project ?? 'MyFiat'
   const issues = logs.filter((log) =>
     ['warn', 'error', 'critical'].includes(log.level),
   )
@@ -119,7 +119,7 @@ export default function Dashboard() {
       </header>
       <main className="dashboard-main">
         <div className="dashboard-left">
-          <InfrastructureMap topology={topology} users={metrics?.activeUsers} />
+          <InfrastructureMap metrics={metrics} agents={agents} />
           <AriConsole logs={logs} source={source} />
         </div>
         <div className="dashboard-right">
@@ -267,7 +267,7 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="dialog-note">
-              The local telemetry service simulates traffic and samples AcmePay
+              The local telemetry service simulates traffic and samples MyFiat
               latency. Findings and node health come from its API.
             </p>
           </>

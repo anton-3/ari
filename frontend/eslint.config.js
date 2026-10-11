@@ -5,7 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
-const FEATURES = ['hero', 'how-it-works', 'simulate']
+const FEATURES = ['hero', 'how-it-works', 'simulate', 'losses-chart']
 const noClimb = { group: ['../*'], message: 'Use @/ imports instead of ../' }
 
 // features never import each other or the app layer
