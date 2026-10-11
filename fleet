@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# fleet — one control script for the whole Ari stack. Anyone on the team can run it.
+#
+# Requirements: bash, ssh, rsync, curl, and your SSH key on the voice server
+# (an existing teammate runs:  ./fleet add-key "ssh-ed25519 AAAA... you@example.com").
+# No .env needed locally: every secret (Twilio, Linode, Kokoro, Gmail) lives on the server
+# and commands that need them run there.
+#
+# Run ./fleet help for commands.
+set -euo pipefail
+
+SERVER="${FLEET_SERVER:-root@172.232.11.148}"
+SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP=/opt/ari
+ARI=https://ari-172-232-11-148.sslip.io
+BANK=https://myfiat-172-232-11-148.sslip.io
+CUSTOMER=https://customer-172-232-11-148.sslip.io
+KOKORO=https://kokoro-172-232-11-148.sslip.io
+
+# short name -> systemd unit / repo dir
+unit() { case "$1" in ari|backend) echo ari-backend;; bank|myfiat) echo myfiat;; customer) echo ari-customer;;
+  stt) echo ari-stt;; kokoro) echo kokoro-api;; caddy) echo caddy;; *) die "unknown service '$1' (ari, bank, customer, stt, kokoro, caddy)";; esac; }
+dir() { case "$1" in ari|backend) echo backend;; bank|myfiat) echo target-app;; customer) echo customer-ari;; stt) echo voice-stt;;
+  *) die "can't deploy '$1' (ari, bank, customer, stt)";; esac; }
+
+die() { echo "fleet: $*" >&2; exit 1; }
+on() { ssh "${SSH_OPTS[@]}" "$SERVER" "$@"; }
+confirm() { read -r -p "$1 [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] || die "cancelled"; }
+probe() { printf '  %-10s %s  %s\n' "$1" "$(curl -s -m 10 -o /dev/null -w '%{http_code}' ${3:-} "$2")" "$2"; }
+
+cmd_status() {
+  echo "Public endpoints (HTTP code):"
+  probe bank "$BANK/"; probe ari "$ARI/"; probe customer "$CUSTOMER/"; probe kokoro "$KOKORO/v1/audio/speech/stream" "-X POST"
+  echo "  (kokoro 401 = up and requiring its key)"
+  echo "Services on the voice server:"
+  on 'for s in ari-backend myfiat ari-customer ari-stt kokoro-api caddy; do
+        st=$(systemctl is-active $s 2>/dev/null || true); [ "$st" = inactive ] && ! systemctl cat $s >/dev/null 2>&1 && st="not installed"
+        printf "  %-13s %s\n" $s "$st"; done
+      case $(curl -s -m 3 -o /dev/null -w "%{http_code}" 127.0.0.1:8090/api/fleet/incident) in
+        200) t="reachable (tunnel up)";; *) t="unreachable: run ./fleet tunnel on the Mac running telemetry";; esac
+      printf "  %-13s %s\n" telemetry "$t"
+      echo "Load: $(cut -d" " -f1-3 /proc/loadavg)   Mem free: $(free -m | awk "/Mem/{print \$7}") MB   Disk: $(df -h / | awk "NR==2{print \$5}") used"'
+}
+
+cmd_deploy() {
+  local targets=("${@:-all}")
+  [ "${targets[0]}" = all ] && targets=(ari bank customer)
+  for t in "${targets[@]}"; do
+    local d; d=$(dir "$t")
+    echo "== deploying $t ($d)"
+    rsync -az --delete --exclude node_modules --exclude .env --exclude postmortems/ --exclude 'data/*.db*' \
+      -e "ssh ${SSH_OPTS[*]}" "$ROOT/$d/" "$SERVER:$APP/$d/"
+    if [ "$t" = stt ]; then on "cd $APP/voice-stt && STT_API_KEY=\$(grep ^STT_API_KEY= /etc/ari-stt.env 2>/dev/null | cut -d= -f2) bash setup.sh"; continue; fi
+    on "cd $APP/$d && chown -R ari:ari . && sudo -u ari npm ci --omit=dev --no-audit --no-fund --no-update-notifier --loglevel=error >/dev/null && systemctl restart $(unit "$t") && sleep 2 && systemctl is-active $(unit "$t")"
+  done
+}
+
+cmd_env() { # env <ari|customer> [KEY=VALUE ...]   (no values: list keys only, values stay hidden)
+  local f; case "${1:-}" in ari|backend) f=$APP/backend/.env;; customer) f=$APP/customer-ari/.env;; *) die "usage: fleet env <ari|customer> [KEY=VALUE ...]";; esac
+  local svc=$1; shift
+  if [ $# -eq 0 ]; then on "grep -oE '^[A-Z_]+=' $f | tr -d = | column"; return; fi
+  for kv in "$@"; do
+    [[ "$kv" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "bad KEY=VALUE: $kv"
+    local k=${kv%%=*} v=${kv#*=}
+    printf '%s' "$v" | on "v=\$(cat); grep -v '^$k=' $f > $f.tmp || true; printf '%s=%s\n' '$k' \"\$v\" >> $f.tmp; mv $f.tmp $f; chown ari:ari $f; chmod 600 $f"
+    echo "set $k"
+  done
+  on "systemctl restart $(unit "$svc")" && echo "restarted $(unit "$svc")"
+}
+
+cmd_nodes() { # Linode instances, via the token on the server
+  on "set -a; . $APP/backend/.env; curl -s -H \"Authorization: Bearer \$LINODE_API_TOKEN\" 'https://api.linode.com/v4/linode/instances?page_size=100'" |
+    python3 -c 'import json,sys
+for n in sorted(json.load(sys.stdin).get("data", []), key=lambda n: n["label"]):
+    print("  %-10s %-24s %-12s %-20s %s" % (n["id"], n["label"], n["status"], n["type"], (n["ipv4"] or [""])[0]))'
+
+}
+
+cmd_node() { # node <boot|shutdown|reboot> <label>
+  local action=${1:-} label=${2:-}
+  [[ "$action" =~ ^(boot|shutdown|reboot)$ && -n "$label" ]] || die "usage: fleet node <boot|shutdown|reboot> <label>"
+  [ "$label" = ari-voice-model ] && [ "$action" = shutdown ] && die "refusing: ari-voice-model is this control server (Ari, the bank, Kokoro all run on it)"
+  [ "$action" != boot ] && confirm "$action $label?"
+  on "set -a; . $APP/backend/.env; id=\$(curl -s -H \"Authorization: Bearer \$LINODE_API_TOKEN\" 'https://api.linode.com/v4/linode/instances?page_size=100' | python3 -c 'import json,sys; print(next((str(n[\"id\"]) for n in json.load(sys.stdin)[\"data\"] if n[\"label\"]==\"$label\"),\"\"))');
+      [ -n \"\$id\" ] || { echo 'no instance labelled $label'; exit 1; }
+      curl -s -X POST -H \"Authorization: Bearer \$LINODE_API_TOKEN\" https://api.linode.com/v4/linode/instances/\$id/$action >/dev/null && echo '$action sent to $label ('\$id')'"
+}
+
+cmd_webhooks() { # show the Twilio numbers' webhooks (and optionally re-point them at the server)
+  on "cd $APP/backend && node --env-file=.env -e '
+    const t=require(\"twilio\")(process.env.TWILIO_SID,process.env.TWILIO_AUTH_TOKEN);
+    const fix=\"${1:-}\"===\"fix\", plan={\"+19137046751\":{voiceUrl:\"$ARI/voice\",smsUrl:\"$ARI/sms\"},\"+18449594100\":{voiceUrl:\"$CUSTOMER/voice\"}};
+    (async()=>{for(const n of await t.incomingPhoneNumbers.list()){
+      if(fix&&plan[n.phoneNumber]) await t.incomingPhoneNumbers(n.sid).update({...plan[n.phoneNumber],voiceMethod:\"POST\",smsMethod:\"POST\"});
+      const u=fix&&plan[n.phoneNumber]?await t.incomingPhoneNumbers(n.sid).fetch():n;
+      console.log(\"  \"+u.phoneNumber.padEnd(14),\"voice:\",u.voiceUrl,\" sms:\",u.smsUrl||\"-\");}})()'"
+}
+
+cmd_tunnel() { # run on the Mac that runs telemetry (:8090): lets server-side Ari reach it, and :18080 reach server-side Ari
+  curl -s -m 3 -o /dev/null http://127.0.0.1:8090/api/fleet/incident || die "telemetry isn't running on this machine (:8090)"
+  pkill -f "R 127.0.0.1:8090:127.0.0.1:8090" 2>/dev/null || true
+  nohup ssh "${SSH_OPTS[@]}" -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+    -R 127.0.0.1:8090:127.0.0.1:8090 -L 127.0.0.1:18080:127.0.0.1:8080 "$SERVER" >/dev/null 2>&1 &
+  sleep 2; on 'curl -s -m 3 -o /dev/null -w "tunnel: server -> telemetry %{http_code}\n" 127.0.0.1:8090/api/fleet/incident'
+}
+
+cmd_drill() { # bounded DDoS drill on our own LB; Ari (on the server) calls the on-call number
+  [ -f "$ROOT/telemetry/src/fleet/drill-ddos.js" ] || die "run from the repo"
+  curl -s -m 3 -o /dev/null http://127.0.0.1:18080/ || die "no tunnel to server Ari: run ./fleet tunnel first"
+  ARI_BACKEND_URL=http://127.0.0.1:18080 node "$ROOT/telemetry/src/fleet/drill-ddos.js"
+}
+
+cmd_help() { cat <<'EOF'
+fleet — control the Ari stack (voice server 172.232.11.148)
+
+  status                         health of every service + endpoint
+  deploy [ari|bank|customer|stt|all]   push your local code to the server and restart (secrets untouched)
+  restart <svc|all>              svc: ari, bank, customer, stt, kokoro, caddy
+  logs <svc> [-f]                last 80 lines (or follow)
+  env <ari|customer> [K=V ...]   list env keys (values hidden) or set values + restart
+  nodes                          list Linode instances
+  node <boot|shutdown|reboot> <label>
+  call <+number> ["opener"] ["instructions"]   Ari calls someone
+  text <+number> "message"       Ari texts someone
+  incident [+number]             Ari places the DDoS incident call
+  webhooks [fix]                 show Twilio number webhooks; "fix" points them at the server
+  tunnel                         (Mac running telemetry) connect telemetry <-> server Ari
+  drill                          run the DDoS drill against the LB (needs tunnel)
+  smoke                          voice pipeline smoke test (Deepgram + LLM + Kokoro, no phone call)
+  ssh                            shell on the server
+  add-key "<ssh public key>"     give a teammate access
+  urls                           print the public URLs
+EOF
+}
+
+c=${1:-help}; shift || true
+case "$c" in
+  status) cmd_status;;
+  deploy) cmd_deploy "$@";;
+  restart) if [ "${1:-}" = all ]; then on "systemctl restart ari-backend myfiat ari-customer && echo restarted"; else on "systemctl restart $(unit "${1:?service}") && systemctl is-active $(unit "$1")"; fi;;
+  logs) u=$(unit "${1:?service}"); if [ "${2:-}" = -f ]; then on -t "journalctl -u $u -f -o cat"; else on "journalctl -u $u -n 80 --no-pager -o cat"; fi;;
+  env) cmd_env "$@";;
+  nodes) cmd_nodes;;
+  node) cmd_node "$@";;
+  call) [ -n "${1:-}" ] || die 'usage: fleet call +15551234567 ["opener"] ["instructions"]'
+        on "cd $APP/backend && sudo -u ari node --env-file=.env call.js $(printf '%q ' "$@")";;
+  text) [ $# -ge 2 ] || die 'usage: fleet text +15551234567 "message"'
+        on "cd $APP/backend && sudo -u ari node --env-file=.env text.js $(printf '%q ' "$@")";;
+  incident) on "curl -s -X POST 127.0.0.1:8080/incident --data-urlencode $(printf '%q' "to=${1:-}")"; echo;;
+  webhooks) cmd_webhooks "${1:-}";;
+  tunnel) cmd_tunnel;;
+  drill) cmd_drill;;
+  smoke) on "cd $APP/backend && sudo -u ari node --env-file=.env voice-smoke.js 2>&1 | tail -1";;
+  ssh) on -t;;
+  add-key) [[ "${1:-}" =~ ^ssh-(ed25519|rsa)\ [A-Za-z0-9+/=]+ ]] || die 'usage: fleet add-key "ssh-ed25519 AAAA... name"'
+           printf '%s\n' "$1" | on 'k=$(cat); grep -qxF "$k" ~/.ssh/authorized_keys || echo "$k" >> ~/.ssh/authorized_keys; echo "key added for ${k##* }"';;
+  urls) printf 'bank      %s\nari       %s  (+1 913-704-6751)\ncustomer  %s  (+1 844-959-4100)\nkokoro    %s\n' "$BANK" "$ARI" "$CUSTOMER" "$KOKORO";;
+  help|-h|--help) cmd_help;;
+  *) die "unknown command '$c' (./fleet help)";;
+esac
