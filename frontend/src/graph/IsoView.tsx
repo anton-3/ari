@@ -221,6 +221,10 @@ interface Props {
   /** camera padding around the scene; defaults leave room for the full-page chrome */
   insets?: { top: number; right: number; bottom: number; left: number }
   showControl: boolean
+  /** scale of label tags, badges and tooltips; defaults to UI_K */
+  uiScale?: number
+  /** server tags without the address line, for when they are drawn large */
+  compactTags?: boolean
   selected: IsoSel | null
   focus: { id: string; n: number } | null
   onSelect: (s: IsoSel | null) => void
@@ -979,12 +983,15 @@ export default function IsoView(props: Props) {
       ctx.lineDashOffset = 0
     }
 
+    // label scale for this frame; set from props at the top of each frame
+    let uiK = UI_K
     const drawTooltip = (lines: { t: string; c?: string }[], anchor: { x: number; y: number; r: number }, side: 'node' | 'cursor') => {
-      ctx.font = `400 11px ${MONO}`
-      const maxW = Math.min(380, W - 24)
-      const shown = lines.map((l) => ({ t: truncate(ctx, l.t, maxW - 20), c: l.c }))
-      const w = Math.min(maxW, Math.max(...shown.map((l) => ctx.measureText(l.t).width)) + 20)
-      const h = shown.length * 16 + 12
+      const tk = uiK / UI_K
+      ctx.font = `400 ${11 * tk}px ${MONO}`
+      const maxW = Math.min(380 * tk, W - 24)
+      const shown = lines.map((l) => ({ t: truncate(ctx, l.t, maxW - 20 * tk), c: l.c }))
+      const w = Math.min(maxW, Math.max(...shown.map((l) => ctx.measureText(l.t).width)) + 20 * tk)
+      const h = (shown.length * 16 + 12) * tk
       let x: number
       let y: number
       if (side === 'node') {
@@ -1012,9 +1019,9 @@ export default function IsoView(props: Props) {
       ctx.textAlign = 'left'
       ctx.textBaseline = 'top'
       shown.forEach((l, i) => {
-        ctx.font = i === 0 ? `600 11px ${MONO}` : `400 11px ${MONO}`
+        ctx.font = i === 0 ? `600 ${11 * tk}px ${MONO}` : `400 ${11 * tk}px ${MONO}`
         ctx.fillStyle = l.c ?? (i === 0 ? C.ink : C.dim)
-        ctx.fillText(l.t, x + 10, y + 7 + i * 16)
+        ctx.fillText(l.t, x + 10 * tk, y + (7 + i * 16) * tk)
       })
     }
 
@@ -1025,6 +1032,7 @@ export default function IsoView(props: Props) {
       const dt = Math.min(0.25, Math.max(0, (now - last) / 1000))
       last = now
       const Pp = propsRef.current
+      uiK = Pp.uiScale ?? UI_K
       const red = Pp.reduced
       const incidentImpact = Pp.metrics?.mode === 'surge' && !Pp.metrics?.stale
       const padT = Pp.insets?.top ?? TOP_PAD
@@ -1743,7 +1751,7 @@ export default function IsoView(props: Props) {
             const chev = it.children.length && !open ? 10 : 0
             const w = tw + sw + 16 + chev
             const hgt = 15
-            const W = w * UI_K, HG = hgt * UI_K
+            const W = w * uiK, HG = hgt * uiK
             const x = open ? j.sx - 4 : j.sx - W / 2
             const y = open ? j.sy - HG - 6 : j.sy - HG - 1
             const rect = { x0: x - 2, y0: y - 2, x1: x + W + 2, y1: y + HG + 2 }
@@ -1753,7 +1761,7 @@ export default function IsoView(props: Props) {
             }
             placed.push(rect)
             ctx.globalAlpha = clamp(j.a, 0, 1)
-            ctx.save(); ctx.translate(x, y); ctx.scale(UI_K, UI_K)
+            ctx.save(); ctx.translate(x, y); ctx.scale(uiK, uiK)
             const isSel = selFk === v.fk
             ctx.fillStyle = isSel ? '#e7f0fd' : 'rgba(255,255,255,0.96)'
             ctx.beginPath(); ctx.roundRect(0, 0, w, hgt, 3); ctx.fill()
@@ -1777,7 +1785,7 @@ export default function IsoView(props: Props) {
             }
             ctx.restore()
             ctx.globalAlpha = 1
-            if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: x + W + 11 * UI_K, y: y + 7.5 * UI_K, level: j.level, n: j.n, a: j.a })
+            if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: x + W + 11 * uiK, y: y + 7.5 * uiK, level: j.level, n: j.n, a: j.a })
             continue
           }
           const n = j.b.node
@@ -1790,10 +1798,11 @@ export default function IsoView(props: Props) {
           const iw = ctx.measureText(ip).width
           ctx.font = `600 8.5px ${MONO}`
           const tagW = tag ? ctx.measureText(tag).width + 8 : 0
-          const w = Math.max(lw + (tagW ? tagW + 6 : 0), iw, showGauge ? 70 : 0) + 14
-          const h = 16 + 13 + (showGauge && n.status === 'running' ? 8 : 0) + 4
+          const showIp = !Pp.compactTags
+          const w = Math.max(lw + (tagW ? tagW + 6 : 0), showIp ? iw : 0, showGauge ? 70 : 0) + 14
+          const h = 16 + (showIp ? 13 : 0) + (showGauge && n.status === 'running' ? 8 : 0) + 4
           const opened = j.b.ex > 0.5 && nodeLay.has(j.b.id)
-          const W = w * UI_K, HH = h * UI_K
+          const W = w * uiK, HH = h * uiK
           const sx = opened ? j.sx - 4 + W / 2 : j.sx
           const y1 = j.sy - 12
           let rect = { x0: sx - W / 2, y0: y1 - HH, x1: sx + W / 2, y1 }
@@ -1813,7 +1822,7 @@ export default function IsoView(props: Props) {
             ctx.lineWidth = 1
             ctx.beginPath(); ctx.moveTo(opened ? j.sx : sx, rect.y1); ctx.lineTo(opened ? j.sx : sx, j.sy - 2); ctx.stroke()
           }
-          ctx.save(); ctx.translate(rect.x0, rect.y0); ctx.scale(UI_K, UI_K)
+          ctx.save(); ctx.translate(rect.x0, rect.y0); ctx.scale(uiK, uiK)
           const R = { x0: 0, y0: 0 }
           ctx.save()
           ctx.shadowColor = 'rgba(30,45,70,0.14)'
@@ -1841,11 +1850,13 @@ export default function IsoView(props: Props) {
             ctx.fillStyle = '#fff'
             ctx.fillText(tag, tx + 4, R.y0 + 6.5)
           }
-          ctx.font = `400 10px ${MONO}`
-          ctx.fillStyle = C.dim
-          ctx.fillText(ip, lx, R.y0 + 18)
+          if (showIp) {
+            ctx.font = `400 10px ${MONO}`
+            ctx.fillStyle = C.dim
+            ctx.fillText(ip, lx, R.y0 + 18)
+          }
           if (showGauge && n.status === 'running') {
-            const gy = R.y0 + 32
+            const gy = R.y0 + (showIp ? 32 : 19)
             const vals = [n.cpu, n.memTotal ? n.memUsed / n.memTotal : 0]
             vals.forEach((v, i) => {
               const x = lx + i * 36
@@ -1869,7 +1880,7 @@ export default function IsoView(props: Props) {
               const A = badgeJobs[i], B = badgeJobs[j]
               let dx = B.x - A.x, dy = B.y - A.y
               let d = Math.hypot(dx, dy)
-              const min = 26 * UI_K
+              const min = 26 * uiK
               if (d >= min) continue
               if (d < 0.01) { dx = 1; dy = -0.4; d = 1 }
               const push = (min - d) / 2
@@ -1881,11 +1892,11 @@ export default function IsoView(props: Props) {
         for (const bj of badgeJobs) {
           const col = bj.level === 'amber' ? C.amber : C.red
           const text = bj.n > 1 ? `!${bj.n}` : '!'
-          ctx.font = `700 ${10 * UI_K}px ${SANS}`
-          const w = Math.max(17 * UI_K, ctx.measureText(text).width + 9 * UI_K)
+          ctx.font = `700 ${10 * uiK}px ${SANS}`
+          const w = Math.max(17 * uiK, ctx.measureText(text).width + 9 * uiK)
           ctx.globalAlpha = clamp(Math.max(0.6, bj.a), 0, 1) * (red ? 1 : 0.85 + 0.15 * pulse)
           ctx.fillStyle = col
-          ctx.beginPath(); ctx.roundRect(bj.x - w / 2, bj.y - 8 * UI_K, w, 16 * UI_K, 8 * UI_K); ctx.fill()
+          ctx.beginPath(); ctx.roundRect(bj.x - w / 2, bj.y - 8 * uiK, w, 16 * uiK, 8 * uiK); ctx.fill()
           ctx.strokeStyle = '#ffffff'
           ctx.lineWidth = 1.5
           ctx.stroke()

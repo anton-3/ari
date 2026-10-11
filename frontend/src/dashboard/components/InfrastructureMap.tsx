@@ -26,9 +26,11 @@ import type {
 } from '../../graph/types'
 import type { Metrics } from '../types'
 
-const INSETS = { top: 20, right: 20, bottom: 20, left: 20 }
+const INSETS = { top: 48, right: 20, bottom: 20, left: 20 }
 // Room the camera leaves for the detail popup while something is selected.
-const DETAIL_INSET = 272
+const DETAIL_INSET = 344
+// Map tags and tooltips, enlarged to match the dashboard's type scale.
+const MAP_UI_SCALE = 1.7
 // Not drawn for now: the controller and its control links.
 const HIDDEN_ROLES = new Set(['controller'])
 const SYNTHETIC_ROLES = new Set(['controller', 'internet'])
@@ -182,6 +184,8 @@ function FleetCard({
               rightInset={selected ? DETAIL_INSET : 0}
               insets={INSETS}
               showControl={false}
+              uiScale={MAP_UI_SCALE}
+              compactTags
               selected={selected}
               focus={null}
               onSelect={setPicked}
