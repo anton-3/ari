@@ -1,0 +1,20 @@
+main 99 256 n= 8 TTFT 573.0 decode 15.16 ITL 66.0
+main 531 256 n= 8 TTFT 1158.1 decode 15.01 ITL 66.61
+main 1879 256 n= 8 TTFT 1370.1 decode 15.56 ITL 64.26
+main 7256 256 n= 8 TTFT 3677.4 decode 15.49 ITL 64.57
+main 14424 256 n= 8 TTFT 8785.9 decode 16.33 ITL 61.56
+main 28757 256 n= 8 TTFT 14322.0 decode 17.59 ITL 56.94
+length 1877 32 n= 3 TTFT 1372.9 decode 35.65 ITL 28.05
+length 1879 128 n= 3 TTFT 1461.9 decode 13.01 ITL 76.86
+length 1880 512 n= 3 TTFT 1590.5 decode 14.76 ITL 67.74
+length 1877 1024 n= 3 TTFT 3969.3 decode 14.66 ITL 68.23
+prefill 101 1 n= 5 TTFT 1503.3 decode 0 ITL 0
+prefill 532 1 n= 5 TTFT 595.0 decode 0 ITL 0
+prefill 1881 1 n= 5 TTFT 1077.3 decode 0 ITL 0
+prefill 7256 1 n= 5 TTFT 2998.9 decode 0 ITL 0
+prefill 14422 1 n= 5 TTFT 5605.4 decode 0 ITL 0
+prefill 28760 1 n= 5 TTFT 14243.0 decode 0 ITL 0
+transport 1879 256 n= 3 TTFT 3435.7 decode 11.89 ITL 84.13
+transport-default 1881 256 n= 1 TTFT 6216.1 decode 19.09 ITL 52.37
+{'utc_start': '2026-10-11T01:30:13.966623+00:00', 'utc_end': '2026-10-11T02:15:58.035746+00:00', 'total_attempts': 110, 'successful': 106, 'status_counts': {'200': 106, '429': 4}, 'total_usage_tokens': 967971, 'event_mismatches': [], 'prefill_regression': {'slope_seconds_per_token': 0.00043982252704588516, 'intercept_seconds': 1.4126406548035395, 'slope_normal_ci95': [0.0003853750852054737, 0.0004942699688862966], 'effective_incremental_tps': 2273.6443417680457, 'r_squared': 0.844948507068803}}
+{'main_prefill_fit': {'n': 48, 'slope_ms_per_token': 0.43982252704588515, 'intercept_s': 1.4126406548035395, 'effective_tps': 2273.6443417680457, 'bootstrap_tps_ci95': [2053.4180674177724, 2554.3737977645487], 'bootstrap_slope_ci95': [0.00039148538122147454, 0.0004869928904723852], 'headers_adjusted_fit': {'effective_tps': 2580.2147400250647, 'intercept_s': 0.6096974708503788}}, 'prefill_prefill_fit': {'n': 30, 'slope_ms_per_token': 0.4378769859404726, 'intercept_s': 0.5624086907693773, 'effective_tps': 2283.746422187956, 'bootstrap_tps_ci95': [2081.378130165778, 2571.059414753287], 'bootstrap_slope_ci95': [0.0003889447261552132, 0.00048045090198019507], 'headers_adjusted_fit': {'effective_tps': 2579.833402003649, 'intercept_s': 0.2771607495789974}}, 'main_aggregate': {'decode_tps': 15.71232468800365, 'itl_ms': 63.644305973609335, 'min_rate_remaining': 56305}}
