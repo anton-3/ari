@@ -385,9 +385,16 @@ button {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: 22px;
   font-weight: 500;
   letter-spacing: -0.02em;
+}
+
+.brand img {
+  display: block;
 }
 
 @media (max-width: 760px) {

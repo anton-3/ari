@@ -95,8 +95,15 @@ export const ROLE: Record<string, RoleShape> = {
   db: { kind: 'cyl', w: 46, d: 46, h: 40, color: '#2f5fd0', glyph: 'PG', weight: 5, ax: 4, ay: 3 },
   controller: { kind: 'box', w: 40, d: 40, h: 34, color: '#0f8fa8', glyph: 'CTL', weight: 4, ax: -7, ay: -5 },
 }
+// Visual scale knobs: BLOCK_K enlarges the server blocks, UI_K the label tags,
+// their text, and the issue badges.
+const BLOCK_K = 1.2
+export const UI_K = 1.25
+const SHAPES: Record<string, RoleShape> = Object.fromEntries(
+  Object.entries(ROLE).map(([k, s]) => [k, { ...s, w: s.w * BLOCK_K, d: s.d * BLOCK_K, h: s.h * BLOCK_K }]),
+)
 export const shapeOf = (r: string): RoleShape =>
-  ROLE[r] ?? { kind: 'box', w: 30, d: 30, h: 28, color: '#738096', glyph: r.slice(0, 3).toUpperCase(), weight: 2, ax: 0, ay: -6 }
+  SHAPES[r] ?? { kind: 'box', w: 30 * BLOCK_K, d: 30 * BLOCK_K, h: 28 * BLOCK_K, color: '#738096', glyph: r.slice(0, 3).toUpperCase(), weight: 2, ax: 0, ay: -6 }
 
 const SANS = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
 const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace'
@@ -1720,18 +1727,20 @@ export default function IsoView(props: Props) {
             const chev = it.children.length && !open ? 10 : 0
             const w = tw + sw + 16 + chev
             const hgt = 15
-            const x = open ? j.sx - 4 : j.sx - w / 2
-            const y = open ? j.sy - hgt - 6 : j.sy - hgt - 1
-            const rect = { x0: x - 2, y0: y - 2, x1: x + w + 2, y1: y + hgt + 2 }
+            const W = w * UI_K, HG = hgt * UI_K
+            const x = open ? j.sx - 4 : j.sx - W / 2
+            const y = open ? j.sy - HG - 6 : j.sy - HG - 1
+            const rect = { x0: x - 2, y0: y - 2, x1: x + W + 2, y1: y + HG + 2 }
             if (j.prio < 150 && !open && overlaps(rect, v.fk, true)) {
               if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: j.foot.x + j.foot.r * 0.6 + 8, y: j.foot.y - 6, level: j.level, n: j.n, a: v.a })
               continue
             }
             placed.push(rect)
             ctx.globalAlpha = clamp(j.a, 0, 1)
+            ctx.save(); ctx.translate(x, y); ctx.scale(UI_K, UI_K)
             const isSel = selFk === v.fk
             ctx.fillStyle = isSel ? '#e7f0fd' : 'rgba(255,255,255,0.96)'
-            ctx.beginPath(); ctx.roundRect(x, y, w, hgt, 3); ctx.fill()
+            ctx.beginPath(); ctx.roundRect(0, 0, w, hgt, 3); ctx.fill()
             ctx.strokeStyle = isSel ? rgba(C.acc, 0.85) : open ? rgba(KIND_COLOR[it.kind] ?? shapeOf(v.b.node.role).color, 0.6) : 'rgba(60,80,110,0.2)'
             ctx.lineWidth = 1
             ctx.stroke()
@@ -1739,19 +1748,20 @@ export default function IsoView(props: Props) {
             ctx.textBaseline = 'middle'
             ctx.font = fontMain
             ctx.fillStyle = C.ink
-            ctx.fillText(text, x + 5, y + 8)
+            ctx.fillText(text, 5, 8)
             ctx.font = `400 9px ${MONO}`
             ctx.fillStyle = subCol
-            ctx.fillText(sub, x + 11 + tw, y + 8)
+            ctx.fillText(sub, 11 + tw, 8)
             if (chev) {
               // expandable affordance: a small chevron
-              const cx2 = x + w - 7, cy2 = y + 7.5
+              const cx2 = w - 7, cy2 = 7.5
               ctx.strokeStyle = C.dim
               ctx.lineWidth = 1.2
               ctx.beginPath(); ctx.moveTo(cx2 - 2, cy2 - 3); ctx.lineTo(cx2 + 1.5, cy2); ctx.lineTo(cx2 - 2, cy2 + 3); ctx.stroke()
             }
+            ctx.restore()
             ctx.globalAlpha = 1
-            if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: x + w + 11, y: y + 7.5, level: j.level, n: j.n, a: j.a })
+            if (j.n > 0 && j.level) badgeJobs.push({ id: v.b.id, keys: v.keys, x: x + W + 11 * UI_K, y: y + 7.5 * UI_K, level: j.level, n: j.n, a: j.a })
             continue
           }
           const n = j.b.node
@@ -1767,13 +1777,14 @@ export default function IsoView(props: Props) {
           const w = Math.max(lw + (tagW ? tagW + 6 : 0), iw, showGauge ? 70 : 0) + 14
           const h = 16 + 13 + (showGauge && n.status === 'running' ? 8 : 0) + 4
           const opened = j.b.ex > 0.5 && nodeLay.has(j.b.id)
-          const sx = opened ? j.sx - 4 + w / 2 : j.sx
+          const W = w * UI_K, HH = h * UI_K
+          const sx = opened ? j.sx - 4 + W / 2 : j.sx
           const y1 = j.sy - 12
-          let rect = { x0: sx - w / 2, y0: y1 - h, x1: sx + w / 2, y1 }
+          let rect = { x0: sx - W / 2, y0: y1 - HH, x1: sx + W / 2, y1 }
           let below = false
           if (j.prio < 200 && overlaps(rect, j.b.id)) {
             const fy = j.foot.y + j.foot.r + 8
-            const alt = { x0: j.foot.x - w / 2, y0: fy, x1: j.foot.x + w / 2, y1: fy + h }
+            const alt = { x0: j.foot.x - W / 2, y0: fy, x1: j.foot.x + W / 2, y1: fy + HH }
             if (overlaps(alt, j.b.id) || alt.y1 > H - padB + 10) continue
             rect = alt
             below = true
@@ -1786,37 +1797,39 @@ export default function IsoView(props: Props) {
             ctx.lineWidth = 1
             ctx.beginPath(); ctx.moveTo(opened ? j.sx : sx, rect.y1); ctx.lineTo(opened ? j.sx : sx, j.sy - 2); ctx.stroke()
           }
+          ctx.save(); ctx.translate(rect.x0, rect.y0); ctx.scale(UI_K, UI_K)
+          const R = { x0: 0, y0: 0 }
           ctx.save()
           ctx.shadowColor = 'rgba(30,45,70,0.14)'
           ctx.shadowBlur = 8
           ctx.shadowOffsetY = 2
           ctx.fillStyle = '#ffffff'
-          ctx.beginPath(); ctx.roundRect(rect.x0, rect.y0, w, h, 4); ctx.fill()
+          ctx.beginPath(); ctx.roundRect(R.x0, R.y0, w, h, 4); ctx.fill()
           ctx.restore()
           ctx.strokeStyle = j.prio >= 200 ? rgba(C.acc, 0.7) : 'rgba(60,80,110,0.18)'
           ctx.lineWidth = 1
-          ctx.beginPath(); ctx.roundRect(rect.x0 + 0.5, rect.y0 + 0.5, w - 1, h - 1, 4); ctx.stroke()
+          ctx.beginPath(); ctx.roundRect(R.x0 + 0.5, R.y0 + 0.5, w - 1, h - 1, 4); ctx.stroke()
           ctx.fillStyle = shapeOf(n.role).color
-          ctx.fillRect(rect.x0 + 0.5, rect.y0 + 4, 2.5, h - 8)
-          const lx = rect.x0 + 8
+          ctx.fillRect(R.x0 + 0.5, R.y0 + 4, 2.5, h - 8)
+          const lx = R.x0 + 8
           ctx.textAlign = 'left'
           ctx.textBaseline = 'top'
           ctx.font = `600 11px ${SANS}`
           ctx.fillStyle = C.ink
-          ctx.fillText(label, lx, rect.y0 + 4)
+          ctx.fillText(label, lx, R.y0 + 4)
           if (tag) {
             ctx.font = `600 8.5px ${MONO}`
             const tx = lx + lw + 6
             ctx.fillStyle = n.status === 'offline' ? C.red : C.acc
-            ctx.beginPath(); ctx.roundRect(tx, rect.y0 + 4.5, tagW, 12, 2); ctx.fill()
+            ctx.beginPath(); ctx.roundRect(tx, R.y0 + 4.5, tagW, 12, 2); ctx.fill()
             ctx.fillStyle = '#fff'
-            ctx.fillText(tag, tx + 4, rect.y0 + 6.5)
+            ctx.fillText(tag, tx + 4, R.y0 + 6.5)
           }
           ctx.font = `400 10px ${MONO}`
           ctx.fillStyle = C.dim
-          ctx.fillText(ip, lx, rect.y0 + 18)
+          ctx.fillText(ip, lx, R.y0 + 18)
           if (showGauge && n.status === 'running') {
-            const gy = rect.y0 + 32
+            const gy = R.y0 + 32
             const vals = [n.cpu, n.memTotal ? n.memUsed / n.memTotal : 0]
             vals.forEach((v, i) => {
               const x = lx + i * 36
@@ -1826,6 +1839,7 @@ export default function IsoView(props: Props) {
               ctx.fillRect(x, gy, 32 * clamp(v, 0, 1), 3)
             })
           }
+          ctx.restore()
           ctx.globalAlpha = 1
           if (j.level && j.n > 0) badgeJobs.push({ id: n.id, x: rect.x1 + 2, y: rect.y0 + 1, level: j.level, n: j.n, a: j.a })
         }
@@ -1839,7 +1853,7 @@ export default function IsoView(props: Props) {
               const A = badgeJobs[i], B = badgeJobs[j]
               let dx = B.x - A.x, dy = B.y - A.y
               let d = Math.hypot(dx, dy)
-              const min = 26
+              const min = 26 * UI_K
               if (d >= min) continue
               if (d < 0.01) { dx = 1; dy = -0.4; d = 1 }
               const push = (min - d) / 2
@@ -1851,11 +1865,11 @@ export default function IsoView(props: Props) {
         for (const bj of badgeJobs) {
           const col = bj.level === 'amber' ? C.amber : C.red
           const text = bj.n > 1 ? `!${bj.n}` : '!'
-          ctx.font = `700 10px ${SANS}`
-          const w = Math.max(17, ctx.measureText(text).width + 9)
+          ctx.font = `700 ${10 * UI_K}px ${SANS}`
+          const w = Math.max(17 * UI_K, ctx.measureText(text).width + 9 * UI_K)
           ctx.globalAlpha = clamp(Math.max(0.6, bj.a), 0, 1) * (red ? 1 : 0.85 + 0.15 * pulse)
           ctx.fillStyle = col
-          ctx.beginPath(); ctx.roundRect(bj.x - w / 2, bj.y - 8, w, 16, 8); ctx.fill()
+          ctx.beginPath(); ctx.roundRect(bj.x - w / 2, bj.y - 8 * UI_K, w, 16 * UI_K, 8 * UI_K); ctx.fill()
           ctx.strokeStyle = '#ffffff'
           ctx.lineWidth = 1.5
           ctx.stroke()

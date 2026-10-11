@@ -62,11 +62,18 @@ test('rate-limit patch is complete, idempotent and refuses ambiguous templates',
   const config = extractNginx(result.out);
   assert.match(config, /http \{/); assert.match(config, /server 127.0.0.1:3000;/);
 });
-test('incident context and mutation ledger survive subsequent turns', async () => {
-  let model = 0, dispatched = 0;
+test('incident context, mutation ledger and postmortem actions survive subsequent turns', async () => {
+  let model = 0, dispatched = 0, closed = 0;
   const session = new CallSession({ callSid: 'CAone', incidentId: 'incident-1', recipient: '+15551234567', log: () => {},
     complete: async () => ++model % 2 ? { role: 'assistant', tool_calls: [{ id: String(model), function: { name: 'open_rate_limit_pr', arguments: '{}' } }] } : { role: 'assistant', content: 'Started.' },
-    dispatch: async (_name, _args, context) => { dispatched++; assert.equal(context.incidentId, 'incident-1'); return 'Started'; } });
+    dispatch: async (_name, _args, context) => { dispatched++; assert.equal(context.incidentId, 'incident-1'); return 'Started'; },
+    onClose: (s) => {
+      closed++;
+      assert.equal(s.context.recipient, '+15551234567');
+      assert.equal(s.actionLog.length, 1);
+      assert.equal(s.actionLog[0].name, 'open_rate_limit_pr');
+      assert.equal(s.actionLog[0].result, 'Started');
+    } });
   session.attach({ ready: true, speak: async () => {}, clear() {}, dispose() {} });
   session.enqueue('Please open the PR');
   while (session.running) await new Promise(resolve => setTimeout(resolve, 5));
@@ -74,4 +81,6 @@ test('incident context and mutation ledger survive subsequent turns', async () =
   while (session.running) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(dispatched, 1);
   session.close();
+  session.close();
+  assert.equal(closed, 1);
 });

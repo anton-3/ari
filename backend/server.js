@@ -11,6 +11,7 @@ import { SMS_SYSTEM_PROMPT, GREETING } from "./voice-prompts.js";
 import { voiceConfig, xmlEscape, relayTwiml, mediaTwiml, fallbackUrl } from "./voice-config.js";
 import { CallSession, SessionStore, voiceLog } from "./voice-session.js";
 import { RelayTransport, MediaTransport, warmGreeting, greetingIsReady } from "./voice-transports.js";
+import { writeAndSendPostmortem, needsPostmortem } from "./postmortem.js";
 import { providerFetch } from "./voice-http.js";
 import { demoJobs } from './demo-jobs.js';
 import { requestedTool } from './demo-intent.js';
@@ -49,6 +50,13 @@ export function createVoiceServer({ config = voiceConfig(), client = new OpenAI(
   const store = new SessionStore((data) => new CallSession({
     ...data, dispatch: (name, args, context) => reset?.locked && !/^(get_|list_)/.test(name)
       ? Promise.resolve('Demo reset is in progress; no remediation was started.') : dispatch(name, args, context), log,
+    // If Ari changed anything on the call, write the postmortem and email the team.
+    onClose: (s) => {
+      if (!needsPostmortem(s.actionLog)) return;
+      writeAndSendPostmortem({ client, model, callSid: s.callSid, messages: s.messages, actions: s.actionLog, startedAt: s.startedAt })
+        .then((r) => console.log(`[${s.callSid}] postmortem ${r.ok ? "emailed" : "saved, email failed: " + r.error} -> ${r.file}`))
+        .catch((e) => console.error(`[${s.callSid}] postmortem failed:`, e.message));
+    },
     complete: async (messages, signal) => {
       const requested = requestedTool(messages);
       const toolChoice = requested ? { type: 'function', function: { name: requested } } : 'auto';

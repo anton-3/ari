@@ -38,7 +38,7 @@ export class TranscriptBuffer {
 export class DeepgramStream extends EventEmitter {
   constructor(config, { Socket = WebSocket } = {}) {
     super();
-    const url = new URL("wss://api.deepgram.com/v1/listen");
+    const url = new URL(config.sttUrl || "wss://api.deepgram.com/v1/listen");
     const params = {
       model: config.model, language: config.language,
       encoding: "mulaw", sample_rate: 8000, channels: 1,

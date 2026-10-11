@@ -13,7 +13,9 @@ export function voiceConfig(env = process.env, checkFfmpeg = true) {
     twilioSid: env.TWILIO_SID,
     ttsProvider: env.TTS_PROVIDER || "ElevenLabs",
     ttsVoice: env.TTS_VOICE || "cjVigY5qzO86Huf0OWal",
-    deepgramKey: env.DEEPGRAM_API,
+    // STT_URL points the Deepgram-protocol client at the self-hosted CPU STT (voice-stt/) instead.
+    sttUrl: env.STT_URL || "wss://api.deepgram.com/v1/listen",
+    deepgramKey: env.STT_URL ? env.STT_API_KEY : env.DEEPGRAM_API,
     model: env.DEEPGRAM_MODEL || "nova-3",
     language: env.DEEPGRAM_LANGUAGE || "en-US",
     endpointing: number("DEEPGRAM_ENDPOINTING_MS", 300, 50, 2000),
@@ -25,7 +27,7 @@ export function voiceConfig(env = process.env, checkFfmpeg = true) {
   };
   if (!["twilio", "custom"].includes(config.stack)) throw new Error("ARI_VOICE_STACK must be twilio or custom");
   if (config.stack === "custom") {
-    for (const key of ["PUBLIC_HOST", "TWILIO_SID", "TWILIO_AUTH_TOKEN", "DEEPGRAM_API", "KOKORO_TTS_BASE_URL", "KOKORO_TTS_API_KEY"]) {
+    for (const key of ["PUBLIC_HOST", "TWILIO_SID", "TWILIO_AUTH_TOKEN", env.STT_URL ? "STT_API_KEY" : "DEEPGRAM_API", "KOKORO_TTS_BASE_URL", "KOKORO_TTS_API_KEY"]) {
       if (!env[key]?.trim()) throw new Error(`Custom voice requires ${key}`);
     }
     if (!/^nova-(2|3)(-|$)/.test(config.model)) throw new Error("DEEPGRAM_MODEL must use the Nova v1 streaming protocol; Flux is not supported");
