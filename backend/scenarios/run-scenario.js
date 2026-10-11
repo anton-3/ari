@@ -11,7 +11,7 @@
 //   DRY_RUN=1 node scenarios/run-scenario.js sqli-commit +15555550123
 //
 // From backend/ you can also run it through node's env-file loader, e.g.:
-//   DRY_RUN=1 node --env-file-if-exists=.env scenarios/run-scenario.js ddos +15555550123
+//   DRY_RUN=1 node --env-file-if-exists=../.env --env-file-if-exists=.env scenarios/run-scenario.js ddos +15555550123
 import { getScenario, listKeys } from "./registry.js";
 
 const [key, to] = process.argv.slice(2);

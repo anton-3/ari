@@ -27,7 +27,7 @@ From the `backend/` directory:
 DRY_RUN=1 node scenarios/run-scenario.js <key> +15555550123
 
 # Actually place the call (needs TWILIO_SID, TWILIO_AUTH_TOKEN, PUBLIC_HOST):
-node --env-file-if-exists=.env scenarios/run-scenario.js <key> +15551234567
+node --env-file-if-exists=../.env --env-file-if-exists=.env scenarios/run-scenario.js <key> +15551234567
 ```
 
 Env vars (same as `drill.js`): `TWILIO_SID`, `TWILIO_AUTH_TOKEN`, `PUBLIC_HOST`,

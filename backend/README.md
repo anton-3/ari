@@ -9,7 +9,7 @@ Both webhooks check Twilio's request signature, so `TWILIO_AUTH_TOKEN` must be s
 ## Setup
 
 1. `cd backend && npm install`
-2. `cp .env.example .env` and set `ANTHROPIC_API_KEY` and `TWILIO_AUTH_TOKEN`.
+2. `cp .env.example .env` and set `OPENAI_API_KEY`, `TWILIO_SID` and `TWILIO_AUTH_TOKEN`. The npm scripts load `backend/.env` first and fall back to the repo-root `.env` for anything it doesn't set.
 3. `npm start`, which listens on port 8080.
 4. Expose it publicly, for example with `brew install cloudflared && cloudflared tunnel --url http://localhost:8080`. Put the hostname it prints (without `https://`) in `.env` as `PUBLIC_HOST`, then restart.
 5. In the Twilio Console, open Phone Numbers → your number → Voice Configuration. Set "A call comes in" to **Webhook**, `https://<PUBLIC_HOST>/voice`, **HTTP POST**. Set "A message comes in" to `https://<PUBLIC_HOST>/sms`, **HTTP POST**.
@@ -39,6 +39,6 @@ On a call, Ari can now use these tools (see `linode.js` and `actions.js`):
 
 `npm run cleanup-nodes` deletes every instance Ari provisioned (tag `ari-provisioned`); the target app is left alone.
 
-Scenarios beyond the DDoS drill live in `scenarios/` — run `node --env-file-if-exists=.env scenarios/run-scenario.js <key> +1NUMBER` (keys: ddos, sqli-commit, exposed-secret, brute-force, port-scan; prefix `DRY_RUN=1` to preview without calling).
+Scenarios beyond the DDoS drill live in `scenarios/` — run `node --env-file-if-exists=../.env --env-file-if-exists=.env scenarios/run-scenario.js <key> +1NUMBER` (keys: ddos, sqli-commit, exposed-secret, brute-force, port-scan; prefix `DRY_RUN=1` to preview without calling).
 
 Note: the Linode account is capped at 10 total instances; "spin up 10" needs a limit increase from Linode support. Ari reports partial success gracefully.

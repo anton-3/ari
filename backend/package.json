@@ -4,11 +4,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node --env-file-if-exists=.env server.js",
-    "call": "node --env-file-if-exists=.env call.js",
-    "text": "node --env-file-if-exists=.env text.js",
-    "drill": "node --env-file-if-exists=.env drill.js",
-    "cleanup-nodes": "node --env-file-if-exists=.env cleanup-nodes.js"
+    "start": "node --env-file-if-exists=../.env --env-file-if-exists=.env server.js",
+    "call": "node --env-file-if-exists=../.env --env-file-if-exists=.env call.js",
+    "text": "node --env-file-if-exists=../.env --env-file-if-exists=.env text.js",
+    "drill": "node --env-file-if-exists=../.env --env-file-if-exists=.env drill.js",
+    "cleanup-nodes": "node --env-file-if-exists=../.env --env-file-if-exists=.env cleanup-nodes.js"
   },
   "repository": {
     "type": "git",
