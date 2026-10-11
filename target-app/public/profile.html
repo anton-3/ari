@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Profile</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar">
+        <div><h1>Profile &amp; account</h1><div class="sub">Your personal and account details</div></div>
+        <div class="topbar__actions"><button class="btn btn--ghost btn--sm" data-action="logout">Sign out</button></div>
+      </header>
+
+      <main class="content">
+        <section class="card">
+          <div class="profile-head">
+            <div class="avatar" data-fill="initials"></div>
+            <div>
+              <h2><span data-fill="name"></span><span class="rolebadge" id="roleBadge"></span></h2>
+              <div class="email" data-fill="email"></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="section-title">Account details</div>
+        <div class="detail-grid" id="details">
+          <div class="detail"><div class="k skel skel-line" style="width:80px"></div><div class="v skel skel-line" style="width:140px"></div></div>
+          <div class="detail"><div class="k skel skel-line" style="width:80px"></div><div class="v skel skel-line" style="width:140px"></div></div>
+        </div>
+
+        <div class="section-title">Security</div>
+        <section class="card">
+          <div class="row-between">
+            <div><div class="v" style="font-weight:600">Password</div><div class="k muted" style="margin-top:4px;font-size:.84rem">Last changed 3 months ago</div></div>
+            <button class="btn btn--ghost btn--sm" id="pwBtn">Change password</button>
+          </div>
+        </section>
+
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) init();
+
+    async function init() {
+      renderShell('/profile.html', session);
+      document.getElementById('roleBadge').textContent = session.user.role;
+      document.getElementById('pwBtn').addEventListener('click', () => toast('Password changes are disabled in the demo.'));
+
+      const { ok, body } = await api('/api/users/' + session.user.id);
+      const grid = document.getElementById('details');
+      if (!ok || !body) { grid.innerHTML = '<div class="detail"><div class="k">Error</div><div class="v">Could not load profile.</div></div>'; return; }
+
+      const ssn = body.ssn_last4 ? `•••-••-${esc(body.ssn_last4)}` : '—';
+      const card = body.card_last4 ? `•••• •••• •••• ${esc(body.card_last4)}` : '—';
+      const details = [
+        ['Full name', esc(body.full_name || session.user.name)],
+        ['Email', esc(body.email || session.user.email)],
+        ['Account ID', '#' + esc(String(body.id).padStart(8, '0'))],
+        ['Role', esc(body.role || session.user.role)],
+        ['Available balance', fmtMoney(body.balance_cents)],
+        ['Debit card', card],
+        ['SSN', ssn],
+        ['Member since', body.created_at ? fmtDate(body.created_at, true) : '—'],
+      ];
+      grid.innerHTML = details.map(([k, v]) => `<div class="detail"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+    }
+  </script>
+</body>
+</html>

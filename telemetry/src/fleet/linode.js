@@ -99,6 +99,12 @@ export async function getInstance(id) {
   return api(`/linode/instances/${id}`);
 }
 
+// Admin keys installed on every fleet node at creation, in addition to the
+// operator's own key. Anton is the Linode account administrator.
+export const ADMIN_KEYS = [
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEPYBAmDJCioejq2EcsaQp1MDZY/ZUcUBzDwce+ykmQy angelettianton@gmail.com',
+];
+
 export async function createInstance({ role, label, pubkey }) {
   const type = typeForRole(role);
   if (!/^ari-net-[a-z]+-\d+$/.test(label)) throw new Error('bad label');
@@ -109,7 +115,7 @@ export async function createInstance({ role, label, pubkey }) {
     image: IMAGE,
     // Random root password: required by the API, never stored or logged.
     root_pass: `${crypto.randomBytes(24).toString('base64url')}Aa1!`,
-    authorized_keys: [pubkey],
+    authorized_keys: [pubkey, ...ADMIN_KEYS.filter((k) => k !== pubkey)],
     private_ip: true,
     booted: true,
     tags: [FLEET_TAG, `role:${role}`],

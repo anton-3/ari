@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Markets</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+  <style>
+    .mk-row td { transition: background .6s; }
+    .mk-row.flash { background: var(--accent-tint) !important; }
+    .seg { display: inline-flex; background: var(--surface-3); border-radius: 10px; padding: 3px; gap: 3px; }
+    .seg button { border: none; background: transparent; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; color: var(--muted); font-size: .86rem; }
+    .seg button.on.buy { background: var(--accent); color: #fff; }
+    .seg button.on.sell { background: var(--neg); color: #fff; }
+    .trade-cost { background: var(--surface-3); border-radius: 12px; padding: 14px 16px; margin: 14px 0; }
+    .trade-cost .row-between + .row-between { margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar">
+        <div><h1>Markets</h1><div class="sub">Live crypto prices &amp; instant trading</div></div>
+        <div class="topbar__actions"><span class="liveflag" id="liveflag"><span class="blip"></span> Live</span></div>
+      </header>
+      <main class="content">
+        <div class="grid-2" style="align-items:start">
+          <section class="card card--pad0">
+            <div class="card__head" style="padding:18px 22px 0"><h3>Crypto market</h3><span class="muted" id="asof" style="font-size:.78rem"></span></div>
+            <div class="table-wrap" style="border:none;box-shadow:none;margin-top:8px">
+              <table class="ledger">
+                <thead><tr><th>Asset</th><th class="num">Price</th><th class="num">24h</th><th>Trend</th><th></th></tr></thead>
+                <tbody id="mkRows"><tr><td colspan="5" class="spinner">Loading market…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div>
+            <section class="card">
+              <div class="card__head"><h3>Trade</h3><span class="muted" id="buyingPower" style="font-size:.82rem"></span></div>
+              <div class="alert" id="tradeAlert"></div>
+              <div class="seg" id="sideSeg" style="margin-bottom:14px">
+                <button class="on buy" data-side="buy">Buy</button>
+                <button data-side="sell">Sell</button>
+              </div>
+              <div class="form-row"><label for="tSym">Asset</label><select id="tSym"></select></div>
+              <div class="form-row"><label for="tQty">Quantity</label><input id="tQty" type="number" min="0" step="0.0001" placeholder="0.00" /></div>
+              <div class="trade-cost">
+                <div class="row-between"><span class="muted" style="font-size:.84rem">Live price</span><b class="tnum" id="tPrice">—</b></div>
+                <div class="row-between"><span class="muted" style="font-size:.84rem">Estimated <span id="costLbl">cost</span></span><b class="tnum" id="tCost">$0.00</b></div>
+              </div>
+              <button class="btn btn--primary btn--block" id="tSubmit">Buy</button>
+            </section>
+
+            <section class="card" style="margin-top:20px">
+              <div class="card__head"><h3>Recent trades</h3></div>
+              <div id="trades"><div class="spinner">Loading…</div></div>
+            </section>
+          </div>
+        </div>
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank. Market data is simulated.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    const hist = {};          // symbol -> observed price series
+    let prices = [];          // latest market snapshot
+    let side = 'buy';
+    let cashCents = null;
+    let timer = null;
+
+    if (session) {
+      renderShell('/markets.html', session);
+      setupTrade();
+      loadMe();
+      loadPrices();
+      loadTrades();
+      timer = setInterval(loadPrices, 18000);
+    }
+    window.addEventListener('beforeunload', () => clearInterval(timer));
+
+    async function loadMe() {
+      const { ok, body } = await api('/api/me');
+      if (ok && body?.accounts) {
+        const chk = body.accounts.find(a => a.kind === 'checking');
+        cashCents = chk ? chk.balance_cents : (body.totals?.cash_cents ?? null);
+        paintBuyingPower();
+      }
+    }
+    function paintBuyingPower() {
+      document.getElementById('buyingPower').textContent = cashCents != null ? `Buying power ${fmtMoney(cashCents)}` : '';
+    }
+
+    async function loadPrices() {
+      const { ok, body } = await api('/api/crypto/prices');
+      const flag = document.getElementById('liveflag');
+      const rowsEl = document.getElementById('mkRows');
+      if (!ok || !body) {
+        flag.innerHTML = '<span class="blip" style="background:var(--neg);animation:none"></span> Offline';
+        if (!prices.length) rowsEl.innerHTML = `<tr><td colspan="5" class="empty">${ICONS.spark}<div>Market data unavailable.</div></td></tr>`;
+        return;
+      }
+      const list = body.prices || (Array.isArray(body) ? body : []);
+      const live = body.source ? (body.source === 'live') : true;
+      flag.innerHTML = `<span class="blip"></span> ${live ? 'Live' : 'Delayed'}`;
+      document.getElementById('asof').textContent = body.as_of ? 'Updated ' + new Date(body.as_of).toLocaleTimeString() : 'Updated ' + new Date().toLocaleTimeString();
+      const prevMap = Object.fromEntries(prices.map(p => [p.symbol, p.price_cents]));
+      prices = list;
+      list.forEach(p => {
+        if (!hist[p.symbol]) hist[p.symbol] = synthSeries(p.price_cents, p.change_24h_pct);
+        hist[p.symbol].push(p.price_cents / 100);
+        if (hist[p.symbol].length > 40) hist[p.symbol].shift();
+      });
+      renderMarket(prevMap);
+      fillAssetSelect();
+      updateCost();
+    }
+
+    function renderMarket(prevMap) {
+      const rowsEl = document.getElementById('mkRows');
+      rowsEl.innerHTML = prices.map(p => {
+        const up = (p.change_24h_pct || 0) >= 0;
+        const moved = prevMap[p.symbol] != null && prevMap[p.symbol] !== p.price_cents;
+        return `<tr class="mk-row" data-sym="${esc(p.symbol)}">
+          <td><div style="display:flex;align-items:center;gap:11px"><div class="sym" style="width:34px;height:34px;background:${brandColor(p.symbol)};color:#fff">${esc(p.symbol)}</div><div><b>${esc(p.symbol)}</b><br><span style="color:var(--muted);font-size:.78rem">${esc(p.name || '')}</span></div></div></td>
+          <td class="num tnum">${fmtMoney(p.price_cents)}</td>
+          <td class="num chg ${up ? 'pos' : 'neg'}">${fmtPct(p.change_24h_pct)}</td>
+          <td>${sparkSvg(hist[p.symbol], up, 90, 30)}</td>
+          <td class="num"><button class="btn btn--subtle btn--sm" data-trade="${esc(p.symbol)}">Trade</button></td>
+        </tr>`;
+      }).join('');
+      rowsEl.querySelectorAll('[data-trade]').forEach(b => b.addEventListener('click', () => { document.getElementById('tSym').value = b.dataset.trade; updateCost(); document.getElementById('tQty').focus(); }));
+      if (prevMap) rowsEl.querySelectorAll('.mk-row').forEach(tr => { const s = tr.dataset.sym; const p = prices.find(x => x.symbol === s); if (prevMap[s] != null && prevMap[s] !== p.price_cents) { tr.classList.add('flash'); setTimeout(() => tr.classList.remove('flash'), 600); } });
+    }
+
+    function fillAssetSelect() {
+      const sel = document.getElementById('tSym');
+      const cur = sel.value;
+      sel.innerHTML = prices.map(p => `<option value="${esc(p.symbol)}">${esc(p.symbol)} · ${esc(p.name || '')}</option>`).join('');
+      if (cur && prices.some(p => p.symbol === cur)) sel.value = cur;
+    }
+
+    function setupTrade() {
+      const seg = document.getElementById('sideSeg');
+      seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        side = b.dataset.side;
+        seg.querySelectorAll('button').forEach(x => x.className = x.dataset.side === side ? `on ${side}` : '');
+        document.getElementById('costLbl').textContent = side === 'buy' ? 'cost' : 'proceeds';
+        document.getElementById('tSubmit').textContent = side === 'buy' ? 'Buy' : 'Sell';
+        document.getElementById('tSubmit').className = 'btn btn--block ' + (side === 'buy' ? 'btn--primary' : 'btn--danger');
+        updateCost();
+      }));
+      document.getElementById('tSym').addEventListener('change', updateCost);
+      document.getElementById('tQty').addEventListener('input', updateCost);
+      document.getElementById('tSubmit').addEventListener('click', submitTrade);
+    }
+
+    function curPrice() { const s = document.getElementById('tSym').value; return (prices.find(p => p.symbol === s) || {}).price_cents || 0; }
+    function updateCost() {
+      const px = curPrice();
+      const qty = parseFloat(document.getElementById('tQty').value) || 0;
+      document.getElementById('tPrice').textContent = px ? fmtMoney(px) : '—';
+      document.getElementById('tCost').textContent = fmtMoney(Math.round(px * qty));
+    }
+
+    async function submitTrade() {
+      const alert = document.getElementById('tradeAlert');
+      alert.classList.remove('show');
+      const symbol = document.getElementById('tSym').value;
+      const quantity = parseFloat(document.getElementById('tQty').value);
+      const btn = document.getElementById('tSubmit');
+      if (!quantity || quantity <= 0) { showAlert('Enter a quantity greater than zero.'); return; }
+      btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Placing…';
+      const { ok, body } = await api('/api/trade', { method: 'POST', body: JSON.stringify({ asset_class: 'crypto', symbol, side, quantity }) });
+      btn.disabled = false; btn.textContent = orig;
+      if (ok && (body?.ok ?? true)) {
+        const tr = body.trade || { symbol, side, quantity, price_cents: curPrice(), total_cents: Math.round(curPrice() * quantity) };
+        toast(`${side === 'buy' ? 'Bought' : 'Sold'} ${tr.quantity} ${tr.symbol} for ${fmtMoney(tr.total_cents)}.`);
+        document.getElementById('tQty').value = '';
+        if (Number.isFinite(body?.cash_cents)) { cashCents = body.cash_cents; paintBuyingPower(); } else loadMe();
+        updateCost(); loadTrades();
+      } else {
+        showAlert(body?.error || 'Trade could not be completed.');
+      }
+    }
+    function showAlert(msg) { const a = document.getElementById('tradeAlert'); a.textContent = msg; a.classList.add('show'); }
+
+    async function loadTrades() {
+      const { ok, body } = await api('/api/trades');
+      const box = document.getElementById('trades');
+      const trades = Array.isArray(body) ? body : body?.trades || [];
+      if (!ok) { box.innerHTML = '<div class="empty">Could not load trades.</div>'; return; }
+      if (!trades.length) { box.innerHTML = `<div class="empty">${ICONS.repeat}<div>No trades yet.</div></div>`; return; }
+      box.innerHTML = trades.slice(0, 8).map(t => `
+        <div class="tx">
+          <div class="tx__icon" style="background:${t.side === 'buy' ? 'var(--pos-soft)' : 'var(--neg-soft)'};color:${t.side === 'buy' ? 'var(--pos)' : 'var(--neg)'}">${t.side === 'buy' ? ICONS.arrowDown : ICONS.arrowUp}</div>
+          <div class="tx__main"><b>${t.side === 'buy' ? 'Bought' : 'Sold'} ${esc(t.symbol)}</b><span>${t.quantity} @ ${fmtMoney(t.price_cents)}</span></div>
+          <div class="tx__right"><div class="tx__amt ${t.side === 'sell' ? 'pos' : ''}">${t.side === 'buy' ? '−' : '+'}${fmtMoney(t.total_cents)}</div><div class="tx__date">${fmtRel(t.created_at)}</div></div>
+        </div>`).join('');
+    }
+  </script>
+</body>
+</html>

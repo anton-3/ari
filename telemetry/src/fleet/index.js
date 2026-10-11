@@ -35,6 +35,8 @@ const REFRESH_MS = 10000;
 const SLOW = { exposure: 60e3, auth: 60e3, updates: 600e3, code: 600e3 };
 // DDoS detector thresholds (attacker req/s; see incident.js for per-IP floor/window).
 const TRIP_ABS_ = 20, TRIP_MULT_ = 3, CLEAR_ABS_ = 8, TRIP_DEBOUNCE_ = 2, CLEAR_DEBOUNCE_ = 3;
+// Rolling window (seconds) for the real distinct-client-IP 'active users' count.
+const ACTIVE_WINDOW_SEC = parseInt(process.env.ACTIVE_WINDOW_SEC || '300', 10);
 
 function httpError(status, message) { const e = new Error(message); e.status = status; return e; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,6 +72,8 @@ export class Fleet {
     this.controllerIp = null;
     this._cpuPrev = null;
     this.controllerCpu = null;
+    this.activeUsers = null;   // real distinct client IPs over the window (null = unknown)
+    this.activeUsersAt = null;
     this.incident = { active: false, since: null, reqPerSec: 0, baselineRps: 3, attackerIps: [],
       blockedIps: [], _baseline: 3, _trip: 0, _clear: 0, _confAt: 0, _busy: false };
     this.incidentLock = makeLock();
@@ -91,6 +95,7 @@ export class Fleet {
     // What is inside the db / cache / lb nodes (tables, keys, nginx config) for the map's drill-down.
     setTimeout(() => refreshInventory(this).catch(() => {}), 8000);
     setInterval(() => refreshInventory(this).catch(() => {}), 60000);
+    setInterval(() => this.pollActiveUsers().catch(() => {}), 12000);
   }
 
   active() { return this.instances.size > 0; }
@@ -369,12 +374,34 @@ export class Fleet {
   async ensureIncidentConf(lb) {
     if (!lb || !this.controllerIp) return;
     if (Date.now() - this.incident._confAt < 60000) return;
+    // Trust X-Forwarded-For from the controller's egress (DDoS drill) AND every
+    // traffic node's private IP (the many-users generator), so the lb logs the
+    // real/spoofed client IP for both.
+    const trusted = [this.controllerIp, ...this.nodesOfRole('traffic').map((t) => t.privateIp)];
     const cmd = `test -f ${BLOCKLIST_FILE} || printf '# ari-net incident blocklist\\n' > ${BLOCKLIST_FILE}; `
       + `cat > ${INCIDENT_CONF}.new && if ! cmp -s ${INCIDENT_CONF}.new ${INCIDENT_CONF}; then mv ${INCIDENT_CONF}.new ${INCIDENT_CONF}; `
       + `nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo applied || echo testfail; else rm -f ${INCIDENT_CONF}.new; echo same; fi`;
-    const r = await sshRun(lb.publicIp, cmd, { input: incidentConfContent(this.controllerIp), timeoutMs: 20000 });
-    if (r.code === 0 && /applied/.test(r.stdout)) this.log(`[fleet] lb real-ip/blocklist config applied (${lb.label})`);
+    const r = await sshRun(lb.publicIp, cmd, { input: incidentConfContent(trusted), timeoutMs: 20000 });
+    if (r.code === 0 && /applied/.test(r.stdout)) this.log(`[fleet] lb real-ip/blocklist config applied (${lb.label}) trusting ${trusted.length} source(s)`);
     if (r.code === 0) this.incident._confAt = Date.now();
+  }
+
+  // Real "live users": distinct client IPs in the lb access log over a rolling
+  // window (ACTIVE_WINDOW_SEC). Excludes fleet-internal IPs, the controller and
+  // loopback. Cached for /api/metrics to override the synthetic activeUsers.
+  async pollActiveUsers() {
+    if (this._activeBusy) return;
+    const lb = this.lbNode();
+    if (!lb) return;
+    this._activeBusy = true;
+    try {
+      const win = ACTIVE_WINDOW_SEC;
+      const cmd = `tail -n 400000 /var/log/nginx/ari-access.log 2>/dev/null | awk -v t=$(( $(date +%s) - ${win} )) '$1>=t {print $3}' | sort -u | wc -l`;
+      const r = await sshRun(lb.publicIp, cmd, { timeoutMs: 15000 });
+      if (r.code !== 0) return;
+      const n = parseInt(r.stdout.trim(), 10);
+      if (Number.isFinite(n)) { this.activeUsers = n; this.activeUsersAt = Date.now(); }
+    } finally { this._activeBusy = false; }
   }
 
   // Read a short window of the lb access log and run the DDoS detector.

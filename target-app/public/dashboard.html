@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar">
+        <div>
+          <h1 id="greeting">Welcome</h1>
+          <div class="sub" id="todate"></div>
+        </div>
+        <div class="topbar__actions">
+          <button class="btn btn--ghost btn--sm" id="btnFreeze">Freeze a card</button>
+          <button class="btn btn--primary btn--sm" id="btnSend">Send money</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="networth" id="networth">
+          <div class="lbl">Total net worth</div>
+          <div class="skel skel-line" style="width:280px;height:46px;background:rgba(255,255,255,.08)"></div>
+        </section>
+
+        <div class="qactions" id="qactions" style="margin-top:22px"></div>
+
+        <div id="alertsWrap"></div>
+
+        <div class="section-title">Accounts</div>
+        <div class="grid-cards" id="accounts">
+          <div class="skel skel-card"></div><div class="skel skel-card"></div><div class="skel skel-card"></div>
+        </div>
+
+        <div class="grid-2" style="margin-top:28px">
+          <section class="card">
+            <div class="card__head"><h3>Recent activity</h3><a href="/transactions.html">View all</a></div>
+            <div class="txlist" id="recent"><div class="spinner">Loading activity…</div></div>
+          </section>
+          <section class="card">
+            <div class="card__head"><h3>This month</h3><a href="/insights.html">Insights</a></div>
+            <div id="cashflow"><div class="spinner">Loading…</div></div>
+          </section>
+        </div>
+
+        <div class="foot-note"><b>MyFiat</b> · Demo · fictional institution · not a real bank. All data shown is fake.</div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) init();
+
+    async function init() {
+      renderShell('/dashboard.html', session);
+      const first = (session.user.name || '').split(' ')[0] || 'there';
+      const h = new Date().getHours();
+      document.getElementById('greeting').textContent = `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'}, ${first}`;
+      document.getElementById('todate').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+      renderQuickActions();
+      document.getElementById('btnSend').addEventListener('click', sendMoneyModal);
+      document.getElementById('btnFreeze').addEventListener('click', freezePrimary);
+
+      loadOverview();
+      loadRecent();
+      loadAlerts();
+      loadCashflow();
+    }
+
+    async function loadOverview() {
+      const { ok, body } = await api('/api/me');
+      const nw = document.getElementById('networth');
+      const acc = document.getElementById('accounts');
+      if (!ok || !body) {
+        nw.innerHTML = '<div class="lbl">Total net worth</div><div class="big">—</div>';
+        acc.innerHTML = '<div class="card empty">Could not load accounts.</div>'; return;
+      }
+      const t = body.totals || {};
+      nw.innerHTML = `
+        <div class="lbl">Total net worth</div>
+        <div class="big tnum">${fmtMoney(t.net_worth_cents)}</div>
+        <div class="split">
+          <div class="s"><span>Cash</span><b class="tnum">${fmtMoney(t.cash_cents)}</b></div>
+          <div class="s"><span>Investments</span><b class="tnum">${fmtMoney(t.investments_cents)}</b></div>
+          <div class="s"><span>Month change</span><b class="trend up">${ICONS.arrowUp} +2.4%</b></div>
+        </div>`;
+      const accounts = body.accounts || [];
+      acc.innerHTML = accounts.length ? accounts.map(acctCard).join('') : '<div class="card empty">No accounts yet.</div>';
+    }
+
+    function acctCard(a) {
+      const credit = a.kind === 'credit';
+      const bal = credit ? Math.abs(a.balance_cents) : a.balance_cents;
+      const meta = credit ? `<span class="tag">Balance owed</span>`
+        : a.apy_bps > 50 ? `<span class="tag pos">${(a.apy_bps / 100).toFixed(2)}% APY</span>`
+        : `<span class="tag">Available</span>`;
+      return `<div class="card acct">
+        <div class="acct__top">
+          <div class="acct__ico ${a.kind}">${a.kind === 'checking' ? ICONS.home : a.kind === 'savings' ? ICONS.shield : ICONS.card}</div>
+          <div><div class="acct__name">${esc(a.name)}</div><div class="acct__mask">•••• ${esc(a.mask)}</div></div>
+        </div>
+        <div class="acct__bal tnum">${credit ? '−' : ''}${fmtMoney(bal)}</div>
+        <div class="acct__meta">${meta}<a style="color:var(--accent);font-size:.8rem;font-weight:600" href="/transactions.html">Details →</a></div>
+      </div>`;
+    }
+
+    async function loadRecent() {
+      const { ok, body } = await api('/api/transactions?pageSize=8');
+      const box = document.getElementById('recent');
+      const txns = body?.transactions || [];
+      if (!ok) { box.innerHTML = `<div class="empty">${ICONS.inbox}<div>Could not load activity.</div></div>`; return; }
+      if (!txns.length) { box.innerHTML = `<div class="empty">${ICONS.inbox}<div>No recent activity.</div></div>`; return; }
+      box.innerHTML = txns.slice(0, 7).map(renderTx).join('');
+    }
+
+    function renderTx(t) {
+      const credit = isCredit(t);
+      return `<div class="tx">
+        <div class="tx__icon">${esc(initials(t.merchant || t.description))}</div>
+        <div class="tx__main"><b>${esc(t.description || t.merchant)}</b><span>${esc(t.merchant || '')}</span></div>
+        <div class="tx__right">
+          <div class="tx__amt ${credit ? 'pos' : ''}">${credit ? '+' : '−'}${fmtMoney(t.amount_cents)}</div>
+          <div class="tx__date">${fmtRel(t.created_at)} · <span class="pill ${esc(t.status)}">${esc(t.status)}</span></div>
+        </div>
+      </div>`;
+    }
+
+    async function loadAlerts() {
+      const { ok, body } = await api('/api/alerts');
+      const wrap = document.getElementById('alertsWrap');
+      const alerts = (Array.isArray(body) ? body : body?.alerts || []).filter(a => a.status === 'open');
+      if (!ok || !alerts.length) { wrap.innerHTML = ''; return; }
+      wrap.innerHTML = `<div class="section-title">Alerts</div><div class="alerts">${alerts.map(alertRow).join('')}</div>`;
+      wrap.querySelectorAll('[data-resolve]').forEach(b => b.addEventListener('click', () => resolveAlert(b.dataset.resolve, b.dataset.action, b)));
+    }
+
+    function alertRow(a) {
+      const sev = a.severity === 'high' ? 'high' : 'warn';
+      const actions = a.kind === 'card_expiring'
+        ? `<a class="btn btn--sm btn--ghost" href="/cards.html">Renew card</a><button class="btn btn--sm btn--subtle" data-resolve="${a.id}" data-action="dismiss">Dismiss</button>`
+        : `<button class="btn btn--sm btn--primary" data-resolve="${a.id}" data-action="confirm_fraud">Report fraud</button><button class="btn btn--sm btn--subtle" data-resolve="${a.id}" data-action="recognized">I recognize this</button>`;
+      return `<div class="alertrow ${sev}">
+        <div class="dot">${a.severity === 'high' ? ICONS.alert : ICONS.card}</div>
+        <div class="body"><b>${esc(a.title)}</b><p>${esc(a.detail)}</p><div class="acts">${actions}</div></div>
+      </div>`;
+    }
+
+    async function resolveAlert(id, action, btn) {
+      btn.disabled = true;
+      const { ok } = await api(`/api/alerts/${id}/resolve`, { method: 'POST', body: JSON.stringify({ action }) });
+      if (ok) { toast(action === 'confirm_fraud' ? 'Fraud reported — card locked and under review.' : 'Alert resolved.'); loadAlerts(); }
+      else { btn.disabled = false; toast('Could not update alert.', true); }
+    }
+
+    async function loadCashflow() {
+      const { ok, body } = await api('/api/insights');
+      const box = document.getElementById('cashflow');
+      if (!ok || !body) { box.innerHTML = '<div class="empty">Could not load.</div>'; return; }
+      const income = body.income_cents || 0, spend = body.spend_cents || 0;
+      const net = income - spend;
+      const top = (body.spend_by_category || []).slice(0, 4);
+      const max = Math.max(...top.map(c => c.amount_cents), 1);
+      box.innerHTML = `
+        <div class="row-between" style="margin-bottom:6px"><span class="muted" style="font-size:.84rem">Income</span><b class="tnum" style="color:var(--pos)">${fmtMoney(income)}</b></div>
+        <div class="row-between" style="margin-bottom:6px"><span class="muted" style="font-size:.84rem">Spending</span><b class="tnum">${fmtMoney(spend)}</b></div>
+        <div class="row-between" style="padding-top:10px;border-top:1px solid var(--line)"><span style="font-weight:600">Net this month</span><b class="tnum" style="color:${net >= 0 ? 'var(--pos)' : 'var(--neg)'}">${net >= 0 ? '+' : '−'}${fmtMoney(Math.abs(net))}</b></div>
+        <div style="margin-top:18px" class="bars">
+          ${top.map(c => `<div class="bar-row"><div class="lab">${esc(c.category)}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(c.amount_cents / max * 100)}%"></div></div><div class="val tnum">${fmtMoney(c.amount_cents, { cents2: false })}</div></div>`).join('')}
+        </div>`;
+    }
+
+    /* ---- quick actions ---- */
+    function renderQuickActions() {
+      const qa = [
+        ['send', 'Send money', sendMoneyModal],
+        ['snow', 'Freeze a card', freezePrimary],
+        ['bill', 'Pay a bill', () => location.href = '/insights.html' + mockQS()],
+        ['spark', 'Ask MyFiat', () => window.MyFiatAssistant?.open()],
+      ];
+      document.getElementById('qactions').innerHTML = qa.map(([ic, lab], i) =>
+        `<button class="qaction" data-qa="${i}"><span class="ico">${ICONS[ic]}</span><span>${lab}</span></button>`).join('');
+      document.querySelectorAll('[data-qa]').forEach((b, i) => b.addEventListener('click', qa[i][2]));
+    }
+
+    async function freezePrimary() {
+      const { ok, body } = await api('/api/cards');
+      const cards = Array.isArray(body) ? body : body?.cards || [];
+      const active = cards.find(c => c.status === 'active');
+      if (!ok || !active) { toast('No active card to freeze.', true); return; }
+      const r = await api(`/api/cards/${active.id}/freeze`, { method: 'POST' });
+      if (r.ok) toast(`Card ending ${active.last4} is now frozen.`);
+      else toast('Could not freeze card.', true);
+    }
+
+    async function sendMoneyModal() {
+      const back = openModal('Send money', `
+        <form id="mPay">
+          <div class="form-row"><label for="mPayee">Pay to</label><select id="mPayee"><option>Loading payees…</option></select></div>
+          <div class="form-row"><label for="mAmt">Amount</label><div class="input-amount"><span>$</span><input id="mAmt" type="number" min="0.01" step="0.01" placeholder="0.00" required /></div></div>
+          <div class="form-row"><label for="mNote">Note (optional)</label><input id="mNote" type="text" maxlength="80" placeholder="What's it for?" /></div>
+          <button class="btn btn--primary btn--block" type="submit" id="mBtn">Send payment</button>
+        </form>`);
+      let merchants = [];
+      const { ok, body } = await api('/api/merchants');
+      merchants = (ok && body?.merchants) ? body.merchants : [];
+      const sel = back.querySelector('#mPayee');
+      sel.innerHTML = merchants.length ? merchants.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('') : '<option value="">No payees available</option>';
+      back.querySelector('#mPay').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const merchant_id = Number(sel.value);
+        const dollars = parseFloat(back.querySelector('#mAmt').value);
+        if (!dollars || dollars <= 0) { toast('Enter a valid amount.', true); return; }
+        const btn = back.querySelector('#mBtn'); btn.disabled = true; btn.textContent = 'Sending…';
+        const name = merchants.find(m => m.id === merchant_id)?.name || 'payee';
+        const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ user_id: session.user.id, merchant_id, amount_cents: Math.round(dollars * 100), description: back.querySelector('#mNote').value.trim() || `Payment to ${name}` }) });
+        if (r.ok && (r.body?.ok ?? true)) { closeModal(); toast(`Sent ${fmtMoney(Math.round(dollars * 100))} to ${name}.`); loadRecent(); loadOverview(); }
+        else { btn.disabled = false; btn.textContent = 'Send payment'; toast(r.body?.error ? `Payment failed: ${r.body.error}` : 'Payment failed.', true); }
+      });
+    }
+  </script>
+</body>
+</html>

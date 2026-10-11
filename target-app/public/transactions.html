@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MyFiat — Transactions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="main">
+      <div class="mobilebar" id="mobilebar"></div>
+      <header class="topbar">
+        <div><h1>Transactions</h1><div class="sub">Search and reconcile your ledger</div></div>
+      </header>
+
+      <main class="content">
+        <form class="toolbar" id="searchForm">
+          <div class="form-row search">
+            <label for="q">Search</label>
+            <input id="q" type="text" placeholder="Merchant, name or email…" />
+          </div>
+          <div class="form-row status">
+            <label for="status">Status</label>
+            <select id="status">
+              <option value="">All statuses</option>
+              <option value="succeeded">Succeeded</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
+              <option value="refunded">Refunded</option>
+            </select>
+          </div>
+          <button class="btn btn--primary" type="submit" style="padding-left:24px;padding-right:24px">Search</button>
+        </form>
+
+        <div class="alert" id="alert"></div>
+
+        <div class="table-wrap">
+          <table class="ledger">
+            <thead><tr><th>Description</th><th>Account</th><th>Merchant</th><th>Date</th><th>Status</th><th class="num">Amount</th></tr></thead>
+            <tbody id="rows"><tr><td colspan="6" class="spinner">Loading transactions…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="pager">
+          <div class="count" id="count"></div>
+          <div class="ctrls">
+            <button class="btn btn--ghost btn--sm" id="prev" disabled>← Prev</button>
+            <span class="count" id="pageLabel">Page 1</span>
+            <button class="btn btn--ghost btn--sm" id="next">Next →</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+  <script>
+    const session = requireAuth();
+    const PAGE_SIZE = 25;
+    let page = 1, lastCount = PAGE_SIZE, total = null;
+
+    if (session) {
+      renderShell('/transactions.html', session);
+      document.getElementById('searchForm').addEventListener('submit', e => { e.preventDefault(); page = 1; load(); });
+      document.getElementById('prev').addEventListener('click', () => { if (page > 1) { page--; load(); } });
+      document.getElementById('next').addEventListener('click', () => { page++; load(); });
+      load();
+    }
+
+    async function load() {
+      const q = document.getElementById('q').value;
+      const status = document.getElementById('status').value;
+      const rows = document.getElementById('rows');
+      const alertBox = document.getElementById('alert');
+      alertBox.classList.remove('show');
+      rows.innerHTML = '<tr><td colspan="6" class="spinner">Loading…</td></tr>';
+
+      const params = new URLSearchParams();
+      // `user` is the ledger search param (kept working; a quote intentionally
+      // surfaces a raw SQL error for the separate security demo).
+      if (q) { params.set('user', q); params.set('search', q); }
+      if (status) params.set('status', status);
+      params.set('page', page);
+      params.set('pageSize', PAGE_SIZE);
+
+      const { ok, status: code, body } = await api('/api/transactions?' + params.toString());
+
+      if (!ok) {
+        rows.innerHTML = '<tr><td colspan="6" class="empty">Query failed.</td></tr>';
+        const msg = body?.error ? body.error : `Request failed (HTTP ${code}).`;
+        alertBox.innerHTML = `<b>Database error:</b> <code>${esc(msg)}</code>`;
+        alertBox.classList.add('show');
+        document.getElementById('count').textContent = '';
+        updatePager(0); return;
+      }
+
+      const txns = body?.transactions || [];
+      lastCount = txns.length;
+      total = Number.isFinite(body?.total) ? body.total : null;
+      rows.innerHTML = txns.length ? txns.map(rowHtml).join('')
+        : '<tr><td colspan="6" class="empty">No transactions match your search.</td></tr>';
+      document.getElementById('count').textContent = total != null
+        ? `${total.toLocaleString()} transaction${total === 1 ? '' : 's'}`
+        : `${txns.length} on this page`;
+      updatePager(txns.length);
+    }
+
+    function rowHtml(t) {
+      const credit = isCredit(t);
+      return `<tr>
+        <td><b>${esc(t.description || '—')}</b></td>
+        <td>${esc(t.user_name || '')}${t.user_email ? `<br><span style="color:var(--muted);font-size:.8rem">${esc(t.user_email)}</span>` : ''}</td>
+        <td>${esc(t.merchant || '')}</td>
+        <td style="white-space:nowrap;color:var(--ink-2)">${fmtDate(t.created_at, true)}</td>
+        <td><span class="pill ${esc(t.status)}">${esc(t.status)}</span></td>
+        <td class="num" style="color:${credit ? 'var(--pos)' : 'inherit'};font-weight:700">${credit ? '+' : '−'}${fmtMoney(t.amount_cents)}</td>
+      </tr>`;
+    }
+
+    function updatePager(n) {
+      document.getElementById('pageLabel').textContent = 'Page ' + page;
+      document.getElementById('prev').disabled = page <= 1;
+      const more = total != null ? page * PAGE_SIZE < total : n >= PAGE_SIZE;
+      document.getElementById('next').disabled = !more;
+    }
+  </script>
+</body>
+</html>

@@ -67,15 +67,19 @@ export function blocklistContent(ips) {
 export const INCIDENT_CONF = '/etc/nginx/conf.d/ari-net-incident.conf';
 export const BLOCKLIST_FILE = '/etc/nginx/ari-net-blocklist.conf';
 
-// conf.d file: real client IP (trust only the controller's egress) + blocklist
+// conf.d file: real client IP (trust the controller's egress for the DDoS drill
+// AND the traffic node's private IP for the many-users generator) + blocklist
 // include. Valid in the http context, so it needs no change to the site config.
-export function incidentConfContent(controllerIp) {
-  return [
-    '# ari-net incident response — managed by the fleet controller. Do not edit by hand.',
+// `trusted` is a list of source IPs whose X-Forwarded-For we honor.
+export function incidentConfContent(trusted = []) {
+  const lines = [
+    '# ari-net incident response + real client IP — managed by the fleet controller. Do not edit by hand.',
     'real_ip_header X-Forwarded-For;',
     'real_ip_recursive on;',
-    controllerIp ? `set_real_ip_from ${controllerIp};` : '# set_real_ip_from <controller egress> (pending first sample)',
-    `include ${BLOCKLIST_FILE};`,
-    '',
-  ].join('\n');
+  ];
+  const srcs = [...new Set(trusted.filter(Boolean))];
+  if (srcs.length) for (const s of srcs) lines.push(`set_real_ip_from ${s};`);
+  else lines.push('# set_real_ip_from <trusted sources> (pending first sample)');
+  lines.push(`include ${BLOCKLIST_FILE};`, '');
+  return lines.join('\n');
 }

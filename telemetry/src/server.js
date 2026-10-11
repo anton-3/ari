@@ -34,12 +34,19 @@ const fleet = new Fleet();
 const fleetAgents = new FleetAgents(fleet, { upsertVuln: (v) => sim.upsertVuln(v) });
 fleet.start();
 
+// Override the simulator's synthetic activeUsers with the REAL count of
+// distinct client IPs the lb logged over the rolling window, when available.
+function withRealActiveUsers(m) {
+  if (!m || fleet.activeUsers == null) return m;
+  return { ...m, activeUsers: fleet.activeUsers };
+}
+
 const app = express();
 app.use(cors());                       // permissive CORS for the dashboard
 app.use(express.json({ limit: '256kb' }));
 
 // ---- HTTP API ----
-app.get('/api/metrics', (_req, res) => res.json(sim.snapshot()));
+app.get('/api/metrics', (_req, res) => res.json(withRealActiveUsers(sim.snapshot())));
 
 app.get('/api/logs', (req, res) => res.json({ logs: sim.getLogs(req.query.limit) }));
 
@@ -156,7 +163,7 @@ function broadcast(obj) {
 wss.on('connection', (ws, req) => {
   ws.isLocal = isLoopback(req.socket.remoteAddress);
   // send a snapshot immediately on connect
-  try { ws.send(JSON.stringify({ type: 'metrics', data: sim.snapshot() })); } catch { /* ignore */ }
+  try { ws.send(JSON.stringify({ type: 'metrics', data: withRealActiveUsers(sim.snapshot()) })); } catch { /* ignore */ }
   try { ws.send(JSON.stringify({ type: 'agents', data: agentsState() })); } catch { /* ignore */ }
   if (ws.isLocal && fleet.active()) {
     try { ws.send(JSON.stringify({ type: 'fleet', data: fleet.snapshot() })); } catch { /* ignore */ }
@@ -183,7 +190,7 @@ onReasoning((entry) => broadcast({ type: 'reasoning', data: entry }));
 // a fresh reasoning line (so ~1 line / 2s) based on current state.
 let tickCount = 0;
 setInterval(() => {
-  const data = sim.tick();
+  const data = withRealActiveUsers(sim.tick());
   broadcast({ type: 'metrics', data });
 
   const real = fleet.active();
