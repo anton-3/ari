@@ -1029,3 +1029,22 @@
 .ari-event { animation: event-enter .18s ease-out; }
 @keyframes event-enter { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .ari-event { animation: none; } }
+
+.reset-trigger { background: none; border: 0; padding: 8px 0 8px 12px; font: inherit; cursor: pointer; }
+.reset-trigger:hover { color: var(--fg); }
+.reset-trigger:focus-visible { outline: 1px solid var(--acc); outline-offset: 4px; }
+.reset-dialog { width: min(560px, calc(100% - 32px)); white-space: normal; }
+.reset-steps { list-style: none; margin: 24px 0; padding: 0; }
+.reset-steps li { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; color: var(--fg-2); font-size: 14px; }
+.reset-steps li[data-status="pending"] { color: var(--muted); }
+.reset-steps li[data-status="done"] .reset-step-icon, .reset-success { color: var(--ok); }
+.reset-step-icon { width: 16px; text-align: center; flex: none; }
+.reset-steps small { display: block; color: var(--dim); font-size: 12px; margin-top: 5px; }
+.reset-spinner { display: inline-block; flex: none; width: 14px; height: 14px; border: 2px solid var(--line-strong); border-top-color: var(--acc, #18c4ed); border-radius: 50%; animation: reset-spin 0.8s linear infinite; }
+@keyframes reset-spin { to { transform: rotate(360deg); } }
+.reset-error, .reset-steps li[data-status="failed"] { color: #f27b77; }
+.reset-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.reset-buttons button { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 10px 18px; background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+.reset-buttons .reset-confirm { background: #10343d; border-color: #1d778c; }
+.reset-buttons button:disabled { opacity: 0.6; cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .reset-spinner { animation: none; } }
