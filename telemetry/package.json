@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "surge": "node src/cli.js surge",
     "normal": "node src/cli.js normal",
-    "drill:ddos": "node src/fleet/drill-ddos.js"
+    "drill:ddos": "node src/fleet/drill-ddos.js",
+    "snapshot:inventory": "node src/fleet/snapshot-inventory.js"
   },
   "license": "MIT",
   "dependencies": {

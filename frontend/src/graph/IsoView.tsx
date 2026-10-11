@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { ACTIVE_AGENT, SEV_RANK, fmtMem, fmtRate, isControl, issueLevel, levelOf } from './helpers'
 import type { Level } from './helpers'
-import { chainOf, errFrac, issueChain, issuesUnder, routeOf, treeFor } from './codetree'
+import { chainOf, errFrac, factsOf, issueChain, issuesUnder, routeOf, treeFor } from './codetree'
 import type { CodeTree, TItem } from './codetree'
 import { loadPos, savePos, takeAlias, takePlacement } from './positions'
 import type { Agent, Codemap, Fleet, FleetLink, FleetNode, Metrics } from './types'
@@ -56,7 +56,22 @@ export const KIND_COLOR: Record<string, string> = {
   method: '#8a96a8',
   query: '#2f5fd0',
   config: '#0f8fa8',
+  // inventory (db / cache / lb contents)
+  table: '#2f5fd0',
+  column: '#55667d',
+  index: '#0f8fa8',
+  key: '#c2368f',
+  field: '#8a5fb0',
+  upstream: '#7b4fe0',
+  block: '#55667d',
+  location: '#22a06b',
+  member: '#3b82c4',
+  directive: '#8a96a8',
+  more: '#b4bcc8',
 }
+// drawn as a cylinder (data stores) rather than a box
+const ROUND_KIND = new Set(['query', 'table', 'key'])
+const FLAT_KIND = new Set(['config', 'index', 'more'])
 
 type Kind = 'box' | 'server' | 'cyl' | 'stack' | 'slab' | 'client' | 'disc'
 export interface RoleShape {
@@ -258,7 +273,7 @@ const SLOTS: [number, number][] = (() => {
   return out
 })()
 
-const KIND_ORDER: Record<string, number> = { route: 0, class: 1, function: 2, query: 3, method: 4, config: 5 }
+const KIND_ORDER: Record<string, number> = { route: 0, class: 1, function: 2, query: 3, method: 4, config: 5, more: 9 }
 const slotCache = new Map<string, Map<string, P2>>()
 function baseSlots(prefix: string, items: TItem[], d: number, tree: CodeTree): Map<string, P2> {
   const sig = prefix + '#' + items.map((i) => i.key).join(',')
@@ -289,14 +304,17 @@ function baseSlots(prefix: string, items: TItem[], d: number, tree: CodeTree): M
 function tileSize(it: TItem, d: number, tree: CodeTree): number {
   const b = tileBase(d)
   if (it.kind === 'file') return it.key === tree.entry ? b * 1.27 : b
-  if (it.kind === 'class') return b * 1.12
+  if (it.kind === 'class' || it.kind === 'table' || it.kind === 'key') return b * 1.12
   if (it.kind === 'config') return b * 0.9
+  if (it.kind === 'index' || it.kind === 'directive' || it.kind === 'field' || it.kind === 'more') return b * 0.85
   return b
 }
 function tileHeight(it: TItem, d: number, tree: CodeTree): number {
   const sc = Math.pow(LEVEL_K, d - 1)
   if (it.kind === 'file') return clamp(6 + Math.sqrt(it.fileInfo?.loc ?? 40) * 1.4, 7, 30)
-  if (it.kind === 'config') return 5 * sc + 2
+  if (FLAT_KIND.has(it.kind)) return 5 * sc + 2
+  const w = factsOf(it)?.weight
+  if (w != null) return (5 + clamp(w, 0, 1) * 24) * sc + 2
   const r = routeOf(tree, it)
   if (r) return (7 + Math.log10(1 + Math.max(0, r.rps)) * 9) * sc + 2
   const lines = it.sym ? Math.max(1, it.sym.endLine - it.sym.line + 1) : 10
@@ -1550,7 +1568,7 @@ export default function IsoView(props: Props) {
         const ef = stat ? errFrac(stat.errorRate) : 0
         const tint = lvl ? (lvl === 'red' ? C.red : C.amber) : ef > 0 ? C.red : null
         const tAmt = lvl ? 1.6 : clamp(ef * 6, 0, 0.75) * 2
-        const kc = it.kind === 'file' ? (it.key === tree.entry ? shapeOf(v.b.node.role).color : rgba(shapeOf(v.b.node.role).color, 0.55)) : KIND_COLOR[it.kind] ?? '#738096'
+        const kc = it.kind === 'file' || it.kind === 'conf' ? (it.key === tree.entry ? shapeOf(v.b.node.role).color : rgba(shapeOf(v.b.node.role).color, 0.55)) : KIND_COLOR[it.kind] ?? '#738096'
         const decal = stat && ef > 0 ? mix(KIND_COLOR.route, C.red, clamp(ef * 6, 0, 0.75)) : kc
         const expandable = it.children.length > 0
         const s = v.s, h = v.h, fx = v.x, fy = v.y, e = v.e
@@ -1567,7 +1585,7 @@ export default function IsoView(props: Props) {
               }
               const ff = faces(tint, tAmt)
               const lid = e * 14 * Math.pow(LEVEL_K, v.d - 1)
-              if (it.kind === 'query') {
+              if (ROUND_KIND.has(it.kind)) {
                 cylinder(fx, fy, 0, s * 0.48, h, ff, 1)
                 const el = groundEllipse(fx, fy, h + lid, s * 0.28)
                 ctx.beginPath(); ctx.ellipse(el.cx, el.cy, el.rx, el.ry, 0, 0, Math.PI * 2)
@@ -1652,7 +1670,8 @@ export default function IsoView(props: Props) {
             const maxW = open ? 260 : Math.max(90, spacing(v.d) * k * CX * 1.7)
             const text = truncate(ctx, it.label, maxW)
             const tw = ctx.measureText(text).width
-            const sub = it.sym?.secret ? 'secret' : stat ? `${fmtRps(stat.rps)} r/s` : it.kind === 'file' ? String(it.fileInfo?.loc ?? '') : it.kind
+            const facts = factsOf(it)
+            const sub = facts ? (facts.sub ?? '') : it.sym?.secret ? 'secret' : stat ? `${fmtRps(stat.rps)} r/s` : it.kind === 'file' ? String(it.fileInfo?.loc ?? '') : it.kind
             const subCol = it.sym?.secret ? C.amber : stat && errFrac(stat.errorRate) > 0 ? C.red : C.dim
             ctx.font = `400 9px ${MONO}`
             const sw = ctx.measureText(sub).width
@@ -1830,7 +1849,9 @@ export default function IsoView(props: Props) {
             for (const r of jobsByNode.get(n.id) ?? []) if (r.active) lines.push({ t: `check ${r.type} ${Math.round(r.progress * 100)}%  ${r.note}`, c: C.job })
             const ni = (n.issues ?? []).length
             if (ni) lines.push({ t: `! ${ni} issue${ni > 1 ? 's' : ''} — select for detail`, c: issueLevel(n) === 'amber' ? C.amber : C.red })
-            if (treeOf(b) && b.ex < 0.5) lines.push({ t: 'click to open into files', c: C.acc })
+            const role = treeOf(b)?.role
+            if (role?.title) lines.splice(1, 0, { t: role.title })
+            if (role && b.ex < 0.5) lines.push({ t: `click to open into ${role.noun ?? 'files'}`, c: C.acc })
             drawTooltip(lines, { x: hover.sx, y: hover.sy, r: Math.min(hover.rs, 60) + 10 }, 'node')
           }
         } else if (hover?.kind === 'item' && hover.keys) {
@@ -1839,7 +1860,11 @@ export default function IsoView(props: Props) {
           if (v && nl && v.e < 0.5) {
             const it = v.it
             const lines: { t: string; c?: string }[] = [{ t: it.kind === 'file' ? it.key : it.label }]
-            if (it.kind === 'file') {
+            const facts = factsOf(it)
+            if (facts) {
+              lines[0].t = `${it.label}  ·  ${it.kind}`
+              for (const [key, value] of (facts.info ?? []).slice(0, 5)) lines.push({ t: `${key}  ${value.length > 44 ? value.slice(0, 43) + '…' : value}`, c: /sensitive/.test(value) ? C.amber : undefined })
+            } else if (it.kind === 'file') {
               const ports = nl.tree.role.ports.filter((q) => q.file === it.key).map((q) => `${q.dir} :${q.port}`)
               lines.push({ t: `${it.fileInfo?.loc ?? 0} loc  ·  ${it.children.length} symbols${ports.length ? '  ·  ' + ports.join(', ') : ''}` })
             } else if (it.sym) {

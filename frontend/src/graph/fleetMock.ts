@@ -1,6 +1,7 @@
 // Offline-demo fleet simulator. Used ONLY when the page is opened with ?sim=1.
 // Same shapes as /api/fleet, /api/fleet/roles and /api/agents so the view code
 // path is identical; add/delete run a simulated provisioning lifecycle.
+import { INVENTORY } from './inventorySnapshot'
 import type {
   Agent,
   Codemap,
@@ -319,6 +320,7 @@ export class MockFleet {
     })
     return {
       roles: {
+        ...INVENTORY.roles,
         app: {
           root: 'target-app',
           files: [

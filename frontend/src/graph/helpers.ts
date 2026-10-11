@@ -48,5 +48,6 @@ export function fileIssues(n: FleetNode, path: string): FleetIssue[] {
 
 export function codeFor(cm: Codemap | null, role: string): CodemapRole | null {
   const r = cm?.roles?.[role]
-  return r && r.files && r.files.length > 0 ? r : null
+  // source files only: the file-level looks don't draw inventory (tables, keys, config)
+  return r && !r.inventory && r.files && r.files.length > 0 ? r : null
 }

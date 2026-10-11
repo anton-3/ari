@@ -281,7 +281,15 @@ export interface FleetAlert {
 
 // ---- Codemap (/api/fleet/codemap) — files of our code per role --------------
 export type SymKind = 'route' | 'function' | 'class' | 'method' | 'config' | 'query' | string
-export interface Sym {
+// Inventory items (what is inside a db / cache / lb node; see telemetry inventory.js)
+// reuse the same shapes with kinds table | column | index | key | field | conf |
+// block | upstream | location | member | directive | more, and describe themselves:
+export interface ItemFacts {
+  sub?: string // short text beside the label (row estimate, type, value)
+  info?: [string, string][] // rows for the tooltip and the detail popup
+  weight?: number // 0..1, drives the tile height
+}
+export interface Sym extends ItemFacts {
   id: string
   name: string
   kind: SymKind
@@ -300,10 +308,11 @@ export interface RouteStat {
   errorRate: number
   p95ms: number | null
 }
-export interface CodemapFile {
+export interface CodemapFile extends ItemFacts {
   path: string
   label: string
   loc: number
+  kind?: string // default 'file'
   symbols?: Sym[]
 }
 export interface CodemapEdge {
@@ -322,6 +331,11 @@ export interface CodemapRole {
   edges: CodemapEdge[]
   ports: CodemapPort[]
   routes?: RouteStat[] // real per-route traffic (app role)
+  inventory?: boolean // not source code: tables, keys, config
+  title?: string // inventory: one-line summary of the server
+  noun?: string // inventory: what the first level holds ("tables")
+  hidden?: number // inventory: first-level items over the cap
+  collectedAt?: string
 }
 export interface Codemap {
   roles: Record<string, CodemapRole>

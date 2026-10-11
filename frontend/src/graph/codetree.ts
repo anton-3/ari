@@ -2,12 +2,12 @@
 // symbols, to any depth. Built from the codemap only; files without `symbols`
 // are simply leaves (nothing is invented).
 import { issueMatchesFile } from './helpers'
-import type { Codemap, CodemapFile, CodemapRole, FleetIssue, RouteStat, Sym } from './types'
+import type { Codemap, CodemapFile, CodemapRole, FleetIssue, ItemFacts, RouteStat, Sym } from './types'
 
 export interface TItem {
   key: string // file path, or symbol id
   label: string
-  kind: string // 'file' | Sym kind
+  kind: string // 'file' | Sym kind | inventory kind (table, key, conf, ...)
   depth: number // 1 = file, 2 = top-level symbol, ...
   file: string // owning file path
   fileInfo?: CodemapFile
@@ -22,6 +22,12 @@ export interface CodeTree {
   byKey: Map<string, TItem>
   routes: Map<string, RouteStat> // symbolId → live per-route stats
   entry: string // entry file path (owns the inbound port)
+}
+
+/** Facts an inventory item carries about itself (none on source files and symbols). */
+export function factsOf(it: TItem): ItemFacts | null {
+  const f = it.sym ?? it.fileInfo
+  return f?.info ? f : null
 }
 
 export function symLabel(s: Sym): string {
@@ -44,14 +50,15 @@ export function treeFor(cm: Codemap | null, roleName: string): CodeTree | null {
     return it
   }
   const files = role.files.map((f) => {
-    const it: TItem = { key: f.path, label: f.label, kind: 'file', depth: 1, file: f.path, fileInfo: f, children: [], parent: null }
+    const it: TItem = { key: f.path, label: f.label, kind: f.kind ?? 'file', depth: 1, file: f.path, fileInfo: f, children: [], parent: null }
     byKey.set(f.path, it)
     it.children = (f.symbols ?? []).map((s) => mkSym(s, it, f.path))
     return it
   })
   const routes = new Map<string, RouteStat>()
   for (const r of role.routes ?? []) if (r && r.symbolId) routes.set(r.symbolId, r)
-  const entry = role.ports.find((p) => p.dir === 'in')?.file ?? role.files.slice().sort((a, b) => b.loc - a.loc)[0].path
+  // inventory roles have no entry file unless traffic really enters through one (nginx site)
+  const entry = role.ports.find((p) => p.dir === 'in')?.file ?? (role.inventory ? '' : role.files.slice().sort((a, b) => b.loc - a.loc)[0].path)
   const t: CodeTree = { role, files, byKey, routes, entry }
   cache.set(role, t)
   return t

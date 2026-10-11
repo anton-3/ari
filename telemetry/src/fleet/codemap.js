@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as acorn from 'acorn';
 import { countLines, extractSpecifiers } from '../repograph.js';
+import { inventoryRoles } from './inventory.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -468,9 +469,9 @@ export function getCodemap() {
   return cache;
 }
 
-// Public view (adds live per-route stats; strips internals).
+// Public view (adds live per-route stats and the db/cache/lb inventory; strips internals).
 export function codemapView() {
-  const roles = {};
+  const roles = { ...inventoryRoles() };
   for (const [role, r] of Object.entries(getCodemap().roles)) {
     const st = routeStats[role];
     const routes = r._routeSyms.map((s) => (st && st.routes.get(s.id)) || {

@@ -13,6 +13,7 @@ import { sshRun, sshPipeTar, forgetHost, closeMaster, PUBKEY_PATH } from './ssh.
 import { sampleNode, cpuUtil, processesOf, LinkTracker } from './collector.js';
 import { IssueStore, fastChecks, checkExposure, checkAuthLog, checkUpdates, checkCode } from './issues.js';
 import { ingestNginx } from './codemap.js';
+import { refreshInventory } from './inventory.js';
 import { analyzeWindow, blocklistContent, incidentConfContent, isPlausibleSourceIp, INCIDENT_CONF, BLOCKLIST_FILE } from './incident.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,9 @@ export class Fleet {
     setInterval(() => this.syncDeps().catch((e) => this.log('[fleet] dep sync failed:', e.message)), 10000);
     setInterval(() => this.pollRoutes().catch(() => {}), 5000);
     setInterval(() => this.pollIncident().catch((e) => this.log('[fleet] incident poll failed:', e.message)), 2000);
+    // What is inside the db / cache / lb nodes (tables, keys, nginx config) for the map's drill-down.
+    setTimeout(() => refreshInventory(this).catch(() => {}), 8000);
+    setInterval(() => refreshInventory(this).catch(() => {}), 60000);
   }
 
   active() { return this.instances.size > 0; }

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import ErrorBoundary from './ErrorBoundary'
 import IsoView, { KIND_COLOR, PROTO_COLOR, ROLE } from './IsoView'
 import type { IsoSel } from './IsoView'
 import { ACTIVE_AGENT, codeFor, fileIssues, fmtMem, fmtRate } from './helpers'
-import { chainOf, errFrac, issuesUnder, itemsOf, resolveSegments, routeOf, treeFor } from './codetree'
+import { chainOf, errFrac, factsOf, issuesUnder, itemsOf, resolveSegments, routeOf, treeFor } from './codetree'
 import type { TItem } from './codetree'
 import { forgetPos } from './positions'
 import { toMs, useFleet } from './useFleet'
@@ -560,7 +560,8 @@ function ItemDetail({ item, node, tree, onGo }: { item: TItem; node: FleetNode; 
   const calls = (sym?.calls ?? []).map((id) => ({ id, it: tree.byKey.get(id) }))
   const callers = sym ? [...tree.byKey.values()].filter((x) => x.sym?.calls?.includes(sym.id)) : []
   const ports = item.kind === 'file' ? tree.role.ports.filter((p) => p.file === item.key) : []
-  const col = item.kind === 'file' ? ROLE[node.role]?.color : KIND_COLOR[item.kind]
+  const col = item.kind === 'file' || item.kind === 'conf' ? ROLE[node.role]?.color : KIND_COLOR[item.kind]
+  const facts = factsOf(item)
   return (
     <div className="iso-item">
       <div className="iso-item-h">
@@ -568,7 +569,9 @@ function ItemDetail({ item, node, tree, onGo }: { item: TItem; node: FleetNode; 
         <span className="iso-item-name" title={item.label}>{sym?.secret && <LockIcon />}{item.label}</span>
       </div>
       <dl className="iso-kv">
-        {item.kind === 'file' ? (<>
+        {facts ? (<>
+          {(facts.info ?? []).map(([key, value]) => (<Fragment key={key}><dt>{key}</dt><dd>{value}</dd></Fragment>))}
+        </>) : item.kind === 'file' ? (<>
           <dt>path</dt><dd>{item.key}</dd>
           <dt>loc</dt><dd>{item.fileInfo?.loc ?? '—'}</dd>
           {ports.length > 0 && (<><dt>ports</dt><dd>{ports.map((p) => `${p.dir} :${p.port}`).join(' · ')}</dd></>)}

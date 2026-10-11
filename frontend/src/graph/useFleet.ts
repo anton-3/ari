@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { API, WS_URL } from './config'
 import { MockFleet } from './fleetMock'
+import { INVENTORY } from './inventorySnapshot'
 import { aliasNode, setPlacement } from './positions'
 import type {
   Agent,
@@ -61,7 +62,9 @@ export function useFleet(sim: boolean, surge: boolean): FleetApi {
   const [log, setLog] = useState<FleetLogLine[]>([])
   const [alerts, setAlerts] = useState<FleetAlert[]>([])
   const [simAgents, setSimAgents] = useState<Agent[]>([])
-  const [codemap, setCodemap] = useState<Codemap | null>(null)
+  // The baked inventory opens db / cache / lb nodes from the first frame; the service's
+  // own introspection replaces a role as soon as it reports it.
+  const [codemap, setCodemap] = useState<Codemap | null>(INVENTORY)
 
   const surgeRef = useRef(surge)
   surgeRef.current = surge
@@ -213,7 +216,7 @@ export function useFleet(sim: boolean, surge: boolean): FleetApi {
         if (r.ok) {
           const j = (await r.json()) as Codemap
           if (!cancelled && j && j.roles) {
-            setCodemap(j)
+            setCodemap({ roles: { ...INVENTORY.roles, ...j.roles } })
             codemapLive = Object.values(j.roles).some((r) => (r?.routes?.length ?? 0) > 0)
           }
         }
