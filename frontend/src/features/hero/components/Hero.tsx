@@ -26,12 +26,8 @@ export function Hero() {
           </span>
           .
         </h1>
-        {/* <p className="lede">
-          Ari watches your code, cloud, and runtime around the clock, proves what it finds, and
-          calls you when an attack needs a human yes.
-        </p> */}
         <p className="lede">
-          Ari does blank.
+          Ari watches your infastructure 24/7, detects threats, and automatically remediates them before they can cause damage.
         </p>
         <div className="hero__actions">
           <ButtonLink turn onClick={() => scrollToSection(site.sections.howPanel, 'center')}>
