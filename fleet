@@ -11,6 +11,13 @@ set -euo pipefail
 
 SERVER="${FLEET_SERVER:-root@172.232.11.148}"
 SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+# Shared fleet key from the team env (FLEET_SSH_KEY, base64 private key) so any laptop with the env works.
+FLEET_KEY="$HOME/.ssh/ari_fleet_ed25519"
+_fleet_key_b64=$(grep -h '^FLEET_SSH_KEY=' "$(dirname "${BASH_SOURCE[0]}")/backend/.env" "$(dirname "${BASH_SOURCE[0]}")/.env" 2>/dev/null | tail -1 | cut -d= -f2-)
+if [ -n "$_fleet_key_b64" ]; then
+  if [ ! -f "$FLEET_KEY" ]; then (umask 077; mkdir -p "$HOME/.ssh"; printf '%s' "$_fleet_key_b64" | base64 --decode > "$FLEET_KEY"); fi
+  SSH_OPTS+=(-i "$FLEET_KEY" -o IdentitiesOnly=yes)
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP=/opt/ari
 ARI=https://ari-172-232-11-148.sslip.io
@@ -102,7 +109,7 @@ cmd_webhooks() { # show the Twilio numbers' webhooks (and optionally re-point th
 cmd_tunnel() { # run on the Mac that runs telemetry (:8090): lets server-side Ari reach it, and :18080 reach server-side Ari
   curl -s -m 3 -o /dev/null http://127.0.0.1:8090/api/fleet/incident || die "telemetry isn't running on this machine (:8090)"
   pkill -f "R 127.0.0.1:8090:127.0.0.1:8090" 2>/dev/null || true
-  nohup ssh "${SSH_OPTS[@]}" -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+  nohup caffeinate -i ssh "${SSH_OPTS[@]}" -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
     -R 127.0.0.1:8090:127.0.0.1:8090 -L 127.0.0.1:18080:127.0.0.1:8080 "$SERVER" >/dev/null 2>&1 &
   sleep 2; on 'curl -s -m 3 -o /dev/null -w "tunnel: server -> telemetry %{http_code}\n" 127.0.0.1:8090/api/fleet/incident'
 }
@@ -131,6 +138,37 @@ cmd_bank_route() { # bank-route <fleet|local>: where https://myfiat-... and cust
       echo \"bank -> $target ($upstream); customer-side Ari -> $api\""
 }
 
+# Fleet web nodes (label web-*), public IPs, via the Linode token on the server.
+web_ips() {
+  on "set -a; . $APP/backend/.env; curl -s -H \"Authorization: Bearer \$LINODE_API_TOKEN\" 'https://api.linode.com/v4/linode/instances?page_size=100'" |
+    python3 -c 'import json,sys
+for n in json.load(sys.stdin).get("data", []):
+    if n["label"].startswith("web-") and n["status"] == "running": print(n["label"], n["ipv4"][0])'
+}
+
+cmd_deploy_fleet_bank() { # the public bank runs on the fleet web nodes behind the lb
+  web_ips | while read -r label ip; do
+    printf '== %s (%s): ' "$label" "$ip"
+    if ! ssh -n "${SSH_OPTS[@]}" -o BatchMode=yes "root@$ip" true 2>/dev/null; then echo "no SSH access (created by another controller?) — skipped"; continue; fi
+    d=$(ssh -n "${SSH_OPTS[@]}" "root@$ip" 'ls -d /opt/myfiat /opt/acmepay 2>/dev/null | head -1'); svc=$(basename "$d")
+    rsync -az </dev/null -e "ssh ${SSH_OPTS[*]}" "$ROOT/target-app/src" "$ROOT/target-app/public" "root@$ip:$d/" &&
+      ssh -n "${SSH_OPTS[@]}" "root@$ip" "chown -R $svc:$svc $d/src $d/public && systemctl restart $svc && for i in \$(seq 1 30); do curl -fs localhost:3000/health >/dev/null && break; sleep 1; done; systemctl is-active $svc"
+  done
+}
+
+cmd_reset_demo() { # bank demo state on the fleet (Dana, Avery, community accounts) + clear the DDoS blocklist
+  confirm "Reset Dana/Avery to the demo state on the fleet bank and clear blocked IPs?"
+  local web; web=$(web_ips | awk 'NR==1{print $2}')
+  [ -n "$web" ] || die "no running web node"
+  (cd "$ROOT/target-app" && node seed.js --force >/dev/null) || die "local seed failed (npm install in target-app?)"
+  ssh "${SSH_OPTS[@]}" -f -N -o ExitOnForwardFailure=yes -L 127.0.0.1:15432:192.168.135.191:5432 "root@$web" || die "db tunnel failed"
+  local url; url=$(ssh "${SSH_OPTS[@]}" "root@$web" "grep ^DATABASE_URL= /etc/ari-net/app.env | cut -d= -f2-" | sed -E 's#@[^/]+/#@127.0.0.1:15432/#')
+  (cd "$ROOT/target-app" && DATABASE_URL="$url" node sync-demo-users.js); local rc=$?
+  pkill -f "15432:192.168.135.191" || true
+  curl -s -m 10 -X POST http://127.0.0.1:8090/api/fleet/unblock-ips -H 'Content-Type: application/json' -d '{"all":true}' >/dev/null && echo "blocklist cleared" || echo "telemetry not running here; blocklist unchanged"
+  return $rc
+}
+
 cmd_help() { cat <<'EOF'
 fleet — control the Ari stack (voice server 172.232.11.148)
 
@@ -147,6 +185,8 @@ fleet — control the Ari stack (voice server 172.232.11.148)
   webhooks [fix]                 show Twilio number webhooks; "fix" points them at the server
   tunnel                         (Mac running telemetry) connect telemetry <-> server Ari
   drill                          run the DDoS drill against the LB (needs tunnel)
+  deploy-fleet-bank              push target-app to the fleet web nodes (what the public bank serves)
+  reset-demo                     fleet bank back to demo state (Dana's card 7781, Avery) + clear blocked IPs
   bank-route <fleet|local>       public bank via the fleet lb (shows on the map) or the voice server copy
   reset-bank                     reseed MyFiat to the demo state (Avery's Visa 1881 expiring next month, etc.)
   smoke                          voice pipeline smoke test (Deepgram + LLM + Kokoro, no phone call)
@@ -173,6 +213,8 @@ case "$c" in
   webhooks) cmd_webhooks "${1:-}";;
   tunnel) cmd_tunnel;;
   drill) cmd_drill;;
+  deploy-fleet-bank) cmd_deploy_fleet_bank;;
+  reset-demo) cmd_reset_demo;;
   bank-route) cmd_bank_route "${1:-}";;
   reset-bank) confirm "Reset the bank to its demo state (wipes transfers, trades, renewals)?"
               on "cd $APP/target-app && sudo -u ari node seed.js --force | tail -1 && systemctl restart myfiat && echo bank reset";;

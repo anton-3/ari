@@ -36,7 +36,7 @@ On a call, Ari can now use these tools (see `linode.js` and `actions.js`):
 - Instances: `list_instances`, `provision_instances` (spin up new nodes; sensible defaults, honors size/region if asked), `shutdown_instance`, `boot_instance`.
 - Live data: `get_live_metrics`, `report_vulnerability` — these talk to the telemetry service (`TELEMETRY_URL`, default http://localhost:8090); findings posted this way appear on the dashboard live.
 - Live fleet actions: `get_incident`, `block_ips`, `scale_web_app`, `open_rate_limit_pr`. These can change real infrastructure or create a PR.
-- Demo stubs: `rollback_commit`, `rotate_secret`, `close_ports`.
+- Hardening: `rollback_commit` (revert branch + real GitHub PR, texted), `rotate_secret` (new Stripe key or session secret deployed to every app node with a rolling restart), `close_ports` (ufw: public access denied, private network kept, verified by an outside probe).
 
 `npm run cleanup-nodes` deletes every instance Ari provisioned (tag `ari-provisioned`); the target app is left alone.
 

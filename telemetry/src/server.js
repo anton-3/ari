@@ -9,6 +9,7 @@ import { generateReasoning, getReasoning, onReasoning, pushReasoning } from './r
 import { Fleet, isLoopback } from './fleet/index.js';
 import { FleetAgents, fleetStatusLine } from './fleet/agents.js';
 import { scanCodemap, codemapView } from './fleet/codemap.js';
+import { closePorts, rotateSecret } from './fleet/hardening.js';
 
 const PORT = parseInt(process.env.PORT || '8090', 10);
 // Optional live target: set LIVE_TARGET=http://localhost:8070 to sample MyFiat.
@@ -193,6 +194,23 @@ app.post('/api/demo/reset', localDemoOnly, async (_req, res) => {
     if (!await fleet.syncUpstream()) throw Object.assign(new Error('Could not remove web-03 from the load balancer upstream'), { status: 502 });
     fleet.publish();
     res.json({ ok: true });
+  } catch (e) { sendErr(res, e); }
+});
+
+// Ari hardening actions (close_ports / rotate_secret tools). Real changes on the fleet, verified.
+app.post('/api/fleet/close-ports', localOnly, async (req, res) => {
+  try {
+    const out = await closePorts(fleet, req.body || {});
+    pushReasoning(`Closed public access to port(s) ${(req.body?.ports || []).join(', ')} on ${out.results.map((r) => r.label).join(', ')}; private network traffic still allowed.`);
+    res.json(out);
+  } catch (e) { sendErr(res, e); }
+});
+
+app.post('/api/fleet/rotate-secret', localOnly, async (req, res) => {
+  try {
+    const out = await rotateSecret(fleet, req.body || {});
+    pushReasoning(`Rotated the ${out.secret} on ${out.results.length} app node(s) with a rolling restart.`);
+    res.json(out);
   } catch (e) { sendErr(res, e); }
 });
 

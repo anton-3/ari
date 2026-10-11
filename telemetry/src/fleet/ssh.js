@@ -1,11 +1,26 @@
 // Non-blocking SSH helpers built on the system `ssh` binary with ControlMaster
 // multiplexing (one TCP connection per node, reused by every sample/command).
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const KEY = path.join(os.homedir(), '.ssh', 'id_ed25519');
+// The shared fleet key travels in the team .env (FLEET_SSH_KEY = base64 of the private key), so any
+// laptop with the env can run the controller. Without it, the machine's own ~/.ssh/id_ed25519 is used.
+export const FLEET_KEY_PATH = path.join(os.homedir(), '.ssh', 'ari_fleet_ed25519');
+function resolveKey() {
+  const b64 = process.env.FLEET_SSH_KEY;
+  if (!b64) return path.join(os.homedir(), '.ssh', 'id_ed25519');
+  const priv = Buffer.from(b64, 'base64').toString('utf8').replace(/\r/g, '').trim() + '\n';
+  fs.mkdirSync(path.dirname(FLEET_KEY_PATH), { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(FLEET_KEY_PATH) || fs.readFileSync(FLEET_KEY_PATH, 'utf8') !== priv) {
+    fs.writeFileSync(FLEET_KEY_PATH, priv, { mode: 0o600 });
+    const pub = execFileSync('ssh-keygen', ['-y', '-f', FLEET_KEY_PATH], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(`${FLEET_KEY_PATH}.pub`, `${pub} ari-fleet\n`, { mode: 0o644 });
+  }
+  return FLEET_KEY_PATH;
+}
+const KEY = resolveKey();
 const STATE_DIR = new URL('../../.fleet/', import.meta.url).pathname;
 fs.mkdirSync(STATE_DIR, { recursive: true });
 const KNOWN_HOSTS = path.join(STATE_DIR, 'known_hosts');

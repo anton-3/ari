@@ -9,14 +9,14 @@ async function tget(path) {
   if (!res.ok) throw new Error(`telemetry ${res.status}`);
   return res.json();
 }
-async function tpost(path, body) {
+async function tpost(path, body, timeoutMs = 15000) {
   const res = await fetch(`${TELEMETRY_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`telemetry ${res.status}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `telemetry ${res.status}`);
   return res.json();
 }
 
@@ -88,7 +88,7 @@ export const tools = [
     type: "function",
     function: {
       name: "rollback_commit",
-      description: "Roll back a specific git commit on a project to undo a bad or insecure change. Confirm with the person first.",
+      description: "Roll back a commit: reverts it on a new branch and opens a real GitHub pull request (never pushes to main), then texts the link. Confirm with the person first.",
       parameters: {
         type: "object",
         properties: {
@@ -103,7 +103,7 @@ export const tools = [
     type: "function",
     function: {
       name: "rotate_secret",
-      description: "Rotate and revoke a leaked credential or API key that was exposed.",
+      description: "Rotate a leaked credential on the live bank: generates a new value, deploys it to every app node with a rolling restart. Supported: the Stripe secret key, the session signing secret (rotating it signs everyone out). Confirm first.",
       parameters: {
         type: "object",
         properties: { name: { type: "string", description: "Which secret/key, e.g. 'Stripe live key'" } },
@@ -173,7 +173,7 @@ export const tools = [
     type: "function",
     function: {
       name: "close_ports",
-      description: "Close exposed network ports on an instance or the whole fleet to tighten the firewall.",
+      description: "Close exposed ports on a fleet node (by label) or the whole fleet: blocks public access with the firewall while keeping the private network between servers open, then verifies from outside. Will not close SSH (22) or the load balancer's web ports. Confirm first.",
       parameters: {
         type: "object",
         properties: {
@@ -227,10 +227,16 @@ export async function runTool(name, args = {}, context = {}) {
       return `Logged a ${args.severity} finding to the dashboard: ${args.title}.`;
     }
     if (name === "rollback_commit") {
-      return `Rolling back commit ${args.sha}${args.project ? ` on ${args.project}` : ""} now. The bad change is reverted and the service is redeploying the previous good build.`;
+      const { rollbackCommit } = await import("./rollback.js");
+      const r = await rollbackCommit({ sha: args.sha, reason: args.reason || "" });
+      if (!r.ok) return `I couldn't roll that back: ${r.error}.`;
+      return `I opened pull request ${r.number} reverting ${r.sha}, "${r.subject}", on branch ${r.branch}. Merge it to roll back. I've texted you the link.`;
     }
     if (name === "rotate_secret") {
-      return `Rotated ${args.name} and revoked the exposed key. New secret is in the vault; I've queued a history purge so the old one can't be recovered from the repo.`;
+      const r = await tpost("/api/fleet/rotate-secret", { name: args.name }, 180000);
+      const nodes = r.results.map((x) => x.label).join(", ");
+      if (!r.ok) return `Rotation of the ${r.secret} stopped partway (${r.results.filter((x) => x.ok).length} of ${r.results.length} nodes); the rest still use the old value.`;
+      return `Rotated the ${r.secret}. The new value ends in ${r.fingerprint.slice(-4)} and is live on ${nodes} after a rolling restart. ${r.note}`;
     }
     if (name === "get_incident") {
       const inc = await tget("/api/fleet/incident");
@@ -263,8 +269,11 @@ export async function runTool(name, args = {}, context = {}) {
       return `Blocked ${ips} at the edge firewall. That traffic is being dropped now.`;
     }
     if (name === "close_ports") {
-      const ports = (args.ports || []).join(", ");
-      return `Closed port${(args.ports || []).length > 1 ? "s" : ""} ${ports} on ${args.label || "the whole fleet"}. Those are no longer reachable from outside.`;
+      const r = await tpost("/api/fleet/close-ports", { ports: args.ports, label: args.label }, 120000);
+      const lines = r.results.map((x) => `${x.label}: ${x.closed.length ? `closed ${x.closed.join(", ")}` : "nothing closed"}`
+        + `${x.refused.length ? ` (kept ${x.refused.join(", ")} open, closing them would cut off SSH or the website)` : ""}`
+        + `${x.stillOpen.length ? `; ${x.stillOpen.join(", ")} still reachable` : ""}${x.error ? `; failed: ${x.error}` : ""}`);
+      return `${r.ok ? "Done, verified from outside." : "Partly done."} ${lines.join(". ")}. The private network between the servers still works.`;
     }
     return `Unknown tool: ${name}`;
   } catch (err) {

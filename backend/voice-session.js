@@ -22,8 +22,6 @@ export class CallSession {
     this.generation = 0;
     this.alive = true;
     this.needsResume = false;
-    this.eggArmed = false;
-    this.canesArmed = false;
   }
 
   attach(transport) {
@@ -60,7 +58,7 @@ export class CallSession {
   }
 
   enqueue(text) {
-    if (!this.alive || !text?.trim() || this.eggEnding) return;
+    if (!this.alive || !text?.trim()) return;
     this.queue.push(text.trim());
     this.log(this, "turn_queued", { depth: this.queue.length });
     void this.drain();
@@ -89,7 +87,6 @@ export class CallSession {
         const turn = { controller: new AbortController(), generation: this.generation };
         this.current = turn;
         try {
-          if (text && await this.easterEgg(text, turn)) continue;
           await this.respond(turn);
         } catch (error) {
           if (!turn.aborted && this.transport) {
@@ -147,7 +144,7 @@ export class CallSession {
         continue;
       }
       const effects = [];
-      const spoken = (choice.content || "").replace(/\[(laugh|rizz)\]/gi, (_, tag) => { effects.push(`${tag.toLowerCase()}.mp3`); return ""; }).replace(/\s+/g, " ").trim();
+      const spoken = (choice.content || "").replace(/\[(rizz)\]/gi, (_, tag) => { effects.push(`${tag.toLowerCase()}.mp3`); return ""; }).replace(/\s+/g, " ").trim();
       if (spoken) await this.transport.speak(spoken, turn);
       for (const file of effects) {
         if (turn.aborted || !this.transport) return;
@@ -156,33 +153,6 @@ export class CallSession {
       return;
     }
     if (!turn.aborted) await this.transport.speak("Let me stop there and pick this up again in a moment.", turn);
-  }
-
-  async easterEgg(text, turn) {
-    if (this.eggArmed) {
-      this.eggArmed = false;
-      this.eggEnding = true;
-      await this.transport.play("bogos.mp3", turn, false);
-      if (!turn.aborted) await this.transport.end();
-      return true;
-    }
-    if (this.canesArmed) {
-      this.canesArmed = false;
-      await this.transport.play("canes-ramp.mp3", turn);
-      return true;
-    }
-    const lower = text.toLowerCase();
-    if (/\b(photo|photos|picture|pictures|pics)\b/.test(lower) && /\b(print|printed|printing|develop|developed)\b/.test(lower)) {
-      this.eggArmed = true;
-      await this.transport.speak("Bogos binted.", turn, false);
-      return true;
-    }
-    if (/\bcane'?s?\b/.test(lower) && /\b(doordash|door dash|deliver|delivered|order|bring|get me|grab|uber ?eats)\b/.test(lower)) {
-      this.canesArmed = true;
-      await this.transport.speak("Sure thing, what do you want?", turn, false);
-      return true;
-    }
-    return false;
   }
 
   disconnect() {

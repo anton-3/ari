@@ -102,6 +102,8 @@ export async function getInstance(id) {
 // Admin keys installed on every fleet node at creation, in addition to the
 // operator's own key. Anton is the Linode account administrator.
 export const ADMIN_KEYS = [
+  // Shared team fleet key (private half is FLEET_SSH_KEY in the team .env).
+  'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP6zhiFQhX8+VtRdwB+iNwDzAiRe3IpeJFS9FZVvMK1Z ari-fleet',
   'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEPYBAmDJCioejq2EcsaQp1MDZY/ZUcUBzDwce+ykmQy angelettianton@gmail.com',
 ];
 

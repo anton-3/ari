@@ -14,6 +14,8 @@ import { sampleNode, cpuUtil, processesOf, LinkTracker } from './collector.js';
 import { IssueStore, fastChecks, checkExposure, checkAuthLog, checkUpdates, checkCode } from './issues.js';
 import { ingestNginx } from './codemap.js';
 import { refreshInventory } from './inventory.js';
+const LEASE_TTL_S = 30;
+const LEASE_RENEW_MS = 10000;
 import { analyzeWindow, blocklistContent, incidentConfContent, isPlausibleSourceIp, INCIDENT_CONF, BLOCKLIST_FILE } from './incident.js';
 import { RequestTelemetry } from './requests.js';
 import { pushReasoning } from '../reasoning.js';
@@ -61,6 +63,8 @@ export class Fleet {
     this.log = log;
     this.ssh = ssh;
     this.activationWait = activationWait;
+    this.controllerId = process.env.FLEET_CONTROLLER_ID || `${os.userInfo().username}@${os.hostname()}`;
+    this.leader = true; // start() switches to the shared lease; direct (test) use acts as sole controller
     this.instances = new Map(); // id -> { inst, role, label, publicIp, privateIp }
     this.st = new Map();        // id -> runtime state
     this.links = [];
@@ -105,12 +109,17 @@ export class Fleet {
   // ---------- lifecycle ----------
   start() {
     if (!this.enabled) { this.log('[fleet] disabled (no LINODE_API_TOKEN or ~/.ssh/id_ed25519.pub)'); return; }
+    this.leader = false;
+    this.renewLease().catch(() => {});
+    setInterval(() => this.renewLease().catch(() => { this.leader = false; }), LEASE_RENEW_MS);
     this.refresh().catch((e) => this.log('[fleet] refresh failed:', e.message));
     setInterval(() => this.refresh().catch((e) => this.log('[fleet] refresh failed:', e.message)), REFRESH_MS);
     setInterval(() => this.collect().catch((e) => this.log('[fleet] collect failed:', e.message)), SAMPLE_MS);
     setInterval(() => this.slowChecks(), 5000);
-    setInterval(() => this.syncUpstream().catch(() => {}), 20000);
-    setInterval(() => this.syncDeps().catch((e) => this.log('[fleet] dep sync failed:', e.message)), 10000);
+    // Background reconcilers run only on the lease holder; explicit actions (scale, block, reboot) call
+    // syncUpstream/syncDeps directly and work from any controller, as before.
+    setInterval(() => { if (this.leader) this.syncUpstream().catch(() => {}); }, 20000);
+    setInterval(() => { if (this.leader) this.syncDeps().catch((e) => this.log('[fleet] dep sync failed:', e.message)); }, 10000);
     setInterval(() => this.pollRoutes().catch(() => {}), 5000);
     setInterval(() => this.pollRequests().catch((e) => this.log('[fleet] request poll failed:', e.message)), 1000);
     // What is inside the db / cache / lb nodes (tables, keys, nginx config) for the map's drill-down.
@@ -129,6 +138,34 @@ export class Fleet {
   }
 
   publish() { for (const fn of this.listeners) fn(this.snapshot()); }
+
+  // ---------- leader lease ----------
+  // Several teammates may run telemetry against the same fleet. Only the lease holder makes automatic
+  // changes (bootstrap, upstream/dependency sync, lb incident config, incident calls); everyone else
+  // keeps reading so every dashboard stays live. The lease lives on the lb, expires after LEASE_TTL_S
+  // without renewal, and FLEET_TAKEOVER=1 claims it immediately.
+  async renewLease() {
+    const lb = this.lbNode();
+    if (!lb) { this.leader = false; return; }
+    const id = this.controllerId.replace(/[^\w@.-]/g, '_');
+    const force = process.env.FLEET_TAKEOVER === '1' && !this._tookOver ? 1 : 0;
+    const cmd = `mkdir -p /etc/ari-net; f=/etc/ari-net/controller.lease; exec 9>$f.lock; flock -w 3 9 || exit 3; `
+      + `now=$(date +%s); h=; e=0; [ -f $f ] && read h e < $f; `
+      + `if [ -z "$h" ] || [ "$h" = "${id}" ] || [ "\${e:-0}" -lt "$now" ] || [ ${force} = 1 ]; then `
+      + `echo "${id} $((now+${LEASE_TTL_S}))" > $f.tmp && mv $f.tmp $f && echo "leader ${id}"; else echo "follower $h"; fi`;
+    const r = await this.ssh(lb.publicIp, cmd, { timeoutMs: 8000 });
+    if (r.code !== 0) throw new Error('lease check failed');
+    const [role, holder] = r.stdout.trim().split(/\s+/);
+    const was = this.leader;
+    this.leader = role === 'leader';
+    this.leaseHolder = holder;
+    if (force && this.leader) this._tookOver = true;
+    if (this.leader !== was || this._leaseLogged !== holder) {
+      this._leaseLogged = holder;
+      this.log(this.leader ? `[fleet] controller lease held by this controller (${id})`
+        : `[fleet] read-only: ${holder} holds the controller lease (FLEET_TAKEOVER=1 to claim it)`);
+    }
+  }
 
   async pollRequests() {
     if (this._requestsBusy) return;
@@ -151,7 +188,7 @@ export class Fleet {
   }
 
   async notifyIncident() {
-    if (this.demo.resetting) return;
+    if (this.demo.resetting || !this.leader) return; // one incident call per attack, from the lease holder
     const inc = this.incidentView();
     if (!inc.active || !inc.id || process.env.DEMO_CALLS_ENABLED === '0' || this.demo.notifications[inc.id]) return;
     this.demo.notifications[inc.id] = { status: 'dispatching', at: Date.now() };
@@ -159,7 +196,9 @@ export class Fleet {
     pushReasoning('Detected a request flood. Calling the on-call engineer for permission to block the sources.');
     try {
       const res = await fetch(`${process.env.ARI_BACKEND_URL || 'http://localhost:8080'}/incident`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(inc), signal: AbortSignal.timeout(8000),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // DEMO_PHONE in the runner's env decides whose phone rings (falls back to the backend's own).
+        body: JSON.stringify(process.env.DEMO_PHONE ? { ...inc, to: process.env.DEMO_PHONE } : inc), signal: AbortSignal.timeout(8000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `backend ${res.status}`);
@@ -270,7 +309,7 @@ export class Fleet {
       if (n.role === 'app') this._depIssues(id, st);
       // (Re)bootstrap nodes that are reachable but not configured yet. This also
       // resumes after a telemetry restart, since the scripts are idempotent.
-      if (fresh.has(id) && !st.ready && !st.boot.running && st.boot.attempts < 4
+      if (this.leader && fresh.has(id) && !st.ready && !st.boot.running && st.boot.attempts < 4
           && Date.now() - st.boot.lastAt > 45000) {
         this.bootstrap(id).catch(() => {});
       }
@@ -474,7 +513,7 @@ export class Fleet {
   // Ensure the lb has conf.d/ari-net-incident.conf (real client IP from the
   // controller's egress + blocklist include) and an existing blocklist file.
   async ensureIncidentConf(lb) {
-    if (!lb || !this.controllerIp) return;
+    if (!this.leader || !lb || !this.controllerIp) return;
     if (Date.now() - this.incident._confAt < 60000) return;
     // Trust X-Forwarded-For from the controller's egress (DDoS drill) AND every
     // traffic node's private IP (the many-users generator), so the lb logs the
@@ -968,7 +1007,8 @@ export class Fleet {
       synth.push({ id: 'internet', label: 'Internet', role: 'internet', status: 'running', publicIp: null, privateIp: null,
         region: null, type: null, cpu: 0, memUsed: 0, memTotal: 0, load1: 0, processes: [], deletable: false, issues: [] });
     }
-    return { nodes: [...synth, ...nodes.filter(n => visible.has(n.id))], links, updatedAt: this.updatedAt || new Date().toISOString() };
+    return { nodes: [...synth, ...nodes.filter(n => visible.has(n.id))], links, updatedAt: this.updatedAt || new Date().toISOString(),
+      controller: { id: this.controllerId, leader: this.leader, leaseHolder: this.leaseHolder || null } };
   }
 
   rolesView() {
