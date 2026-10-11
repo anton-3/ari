@@ -203,6 +203,36 @@ button {
   transform: translateX(-64px);
 }
 
+/* Turn buttons: an underline draws in under the label from the left and the
+   arrow turns from pointing right to pointing down. */
+.btn--turn {
+  --btn-arrow-size: 16px;
+  gap: 10px;
+}
+
+.btn__text {
+  position: relative;
+}
+
+.btn__text::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -5px;
+  width: 100%;
+  height: 1.5px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s ease;
+}
+
+.btn--turn .btn__arrow {
+  position: static;
+  margin-top: 0;
+  transition: transform 0.3s ease;
+}
+
 /* Ghost: floods with the foreground colour and the text inverts to black. */
 .btn--ghost .btn__fill {
   background: var(--fg);
@@ -234,6 +264,19 @@ button {
 
   .btn--arrow:hover .btn__arrow--in {
     transform: translateX(0);
+  }
+
+  /* No lift here: the underline and arrow are the hover feedback. */
+  .btn--turn:hover {
+    transform: none;
+  }
+
+  .btn--turn:hover .btn__text::after {
+    transform: scaleX(1);
+  }
+
+  .btn--turn:hover .btn__arrow {
+    transform: rotate(90deg);
   }
 
   .btn--ghost.btn--arrow:hover {
